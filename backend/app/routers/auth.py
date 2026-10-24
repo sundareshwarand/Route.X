@@ -1,6 +1,7 @@
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import User, UserRole, utc_now
@@ -13,14 +14,15 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == user_in.email).first()
+    email_clean = (user_in.email or "").strip().lower()
+    existing = db.query(User).filter(func.lower(User.email) == email_clean).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A user with this email address already exists"
         )
     user = User(
-        email=user_in.email,
+        email=email_clean,
         hashed_password=hash_password(user_in.password),
         full_name=user_in.full_name,
         role=user_in.role,
@@ -35,8 +37,10 @@ def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    email_clean = (form_data.username or "").strip().lower()
+    password_clean = form_data.password.strip() if form_data.password else ""
+    user = db.query(User).filter(func.lower(User.email) == email_clean).first()
+    if not user or not verify_password(password_clean, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -59,8 +63,10 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 
 @router.post("/login/json", response_model=Token)
 def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+    email_clean = (payload.email or "").strip().lower()
+    password_clean = payload.password.strip() if payload.password else ""
+    user = db.query(User).filter(func.lower(User.email) == email_clean).first()
+    if not user or not verify_password(password_clean, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"

@@ -66,17 +66,43 @@ api.interceptors.request.use((config) => {
 
 export const authService = {
   login: async (username, password) => {
-    const formData = new FormData();
-    formData.append('username', username);
-    formData.append('password', password);
-    const res = await api.post('/auth/login', formData, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
-    if (res.data.access_token) {
-      localStorage.setItem('ROUTEX_TOKEN', res.data.access_token);
-      localStorage.setItem('ROUTEX_USER', JSON.stringify(res.data.user));
+    const cleanUsername = (username || '').trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+
+    try {
+      // Primary: standard URLSearchParams encoding for OAuth2 form specification
+      const params = new URLSearchParams();
+      params.append('username', cleanUsername);
+      params.append('password', cleanPassword);
+      
+      const res = await api.post('/auth/login', params.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+      if (res.data?.access_token) {
+        localStorage.setItem('ROUTEX_TOKEN', res.data.access_token);
+        localStorage.setItem('ROUTEX_USER', JSON.stringify(res.data.user));
+      }
+      return res.data;
+    } catch (err) {
+      // If server returned 401 Unauthorized or 400 Inactive, re-throw immediately
+      if (err.response && (err.response.status === 401 || err.response.status === 400)) {
+        throw err;
+      }
+      // If 422, 415 or form serialization issue occurred, attempt JSON login endpoint
+      try {
+        const jsonRes = await api.post('/auth/login/json', {
+          email: cleanUsername,
+          password: cleanPassword
+        });
+        if (jsonRes.data?.access_token) {
+          localStorage.setItem('ROUTEX_TOKEN', jsonRes.data.access_token);
+          localStorage.setItem('ROUTEX_USER', JSON.stringify(jsonRes.data.user));
+        }
+        return jsonRes.data;
+      } catch (jsonErr) {
+        throw jsonErr.response ? jsonErr : err;
+      }
     }
-    return res.data;
   },
   getCurrentUser: async () => {
     const res = await api.get('/auth/me');

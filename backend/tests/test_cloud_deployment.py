@@ -68,6 +68,36 @@ def test_driver_role_cannot_perform_operator_actions():
     assert "Operator privileges required" in reorder_resp.json()["detail"]
 
 
+def test_case_insensitive_and_trimmed_email_login():
+    """Verify that login handles mobile keyboard auto-capitalization and trailing spaces."""
+    # 1. Capitalized email (Android keyboard auto-capitalization)
+    res_cap = client.post(
+        "/api/auth/login",
+        data={"username": "Test_Operator@routex.org", "password": "password123"}
+    )
+    assert res_cap.status_code == 200
+    assert "access_token" in res_cap.json()
+
+    # 2. Trailing whitespace
+    res_space = client.post(
+        "/api/auth/login",
+        data={"username": " test_operator@routex.org ", "password": "password123"}
+    )
+    assert res_space.status_code == 200
+    assert "access_token" in res_space.json()
+
+
+def test_json_login_endpoint():
+    """Verify fallback JSON login endpoint for mobile WebViews."""
+    res = client.post(
+        "/api/auth/login/json",
+        json={"email": "Test_Operator@routex.org", "password": "password123"}
+    )
+    assert res.status_code == 200
+    assert "access_token" in res.json()
+    assert res.json()["user"]["role"] == "operator"
+
+
 def test_mandatory_two_second_clearance_safety_invariable():
     """
     SAFETY-CRITICAL TEST:

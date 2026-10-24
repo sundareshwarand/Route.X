@@ -223,7 +223,15 @@ export default function App() {
       const data = await authService.login(loginEmail, loginPassword);
       setUser(data.user);
     } catch (err) {
-      setLoginError(err.response?.data?.detail || 'Invalid email or password');
+      if (!err.response) {
+        setLoginError(`Cannot reach backend at ${getBaseUrl()}. Tap ENDPOINT above to check your URL or verify server is running.`);
+      } else if (typeof err.response.data?.detail === 'string') {
+        setLoginError(err.response.data.detail);
+      } else if (Array.isArray(err.response.data?.detail)) {
+        setLoginError(err.response.data.detail.map(d => d.msg).join(', '));
+      } else {
+        setLoginError('Invalid email or password');
+      }
     } finally {
       setLoginLoading(false);
     }
@@ -335,6 +343,9 @@ export default function App() {
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
                     placeholder="operator@routex.org"
                     className="w-full bg-command-surface border border-command-border rounded-lg pl-9 pr-3 py-2.5 text-xs text-command-text placeholder-command-muted focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition font-mono"
                   />
@@ -352,6 +363,9 @@ export default function App() {
                     required
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
                     className="w-full bg-command-surface border border-command-border rounded-lg pl-9 pr-3 py-2.5 text-xs text-command-text focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition font-mono"
                   />
                 </div>

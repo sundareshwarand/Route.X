@@ -1,9 +1,8 @@
 {
   "appId": "org.routex.app",
-  "appName": "RouteX Emergency",
+  "appName": "RouteX",
   "webDir": "dist",
   "server": {
-    "cleartext": true,
     "androidScheme": "https"
   }
 }

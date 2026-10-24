@@ -97,6 +97,21 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('operator123');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [serverModalOpen, setServerModalOpen] = useState(false);
+  const [serverUrlInput, setServerUrlInput] = useState(() => localStorage.getItem('ROUTEX_API_URL') || getBaseUrl());
+  const [serverSavedNotice, setServerSavedNotice] = useState(false);
+
+  const handleSaveServerUrl = () => {
+    const cleaned = serverUrlInput.trim().replace(/\/+$/, '');
+    if (cleaned) {
+      localStorage.setItem('ROUTEX_API_URL', cleaned);
+      setServerSavedNotice(true);
+      setTimeout(() => {
+        setServerSavedNotice(false);
+        setServerModalOpen(false);
+      }, 800);
+    }
+  };
 
   // Fetch Core Data
   const fetchData = async () => {
@@ -238,14 +253,58 @@ export default function App() {
               <span className="text-[10px] text-command-muted font-mono ml-2 border border-command-border px-1.5 py-0.5 rounded">EOC v2.0</span>
             </div>
           </div>
-          <div className="flex items-center space-x-2 text-xs font-mono text-command-muted">
+          <button 
+            type="button" 
+            onClick={() => setServerModalOpen(!serverModalOpen)}
+            className="flex items-center space-x-2 text-xs font-mono text-command-muted px-2.5 py-1 bg-command-surface border border-command-border hover:border-sky-500/50 rounded-lg transition"
+            title="Configure Cloud or Local Backend API URL"
+          >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>BACKEND ONLINE :8000</span>
-          </div>
+            <span className="hidden sm:inline text-slate-300">ENDPOINT:</span>
+            <span className="font-semibold text-sky-400 max-w-[150px] sm:max-w-[200px] truncate">{getBaseUrl()}</span>
+            <Settings className="w-3.5 h-3.5 text-slate-400" />
+          </button>
         </div>
 
         {/* Center Card */}
-        <div className="w-full max-w-md mx-auto my-auto">
+        <div className="w-full max-w-md mx-auto my-auto space-y-4">
+          {serverModalOpen && (
+            <div className="bg-command-panel border border-sky-500/40 rounded-xl p-4 shadow-command-card space-y-3 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-100 flex items-center gap-1.5 font-mono">
+                  <Cpu className="w-3.5 h-3.5 text-sky-400" /> Backend API Endpoint
+                </span>
+                <span className="text-[10px] text-sky-400 font-mono">HTTPS Cloud / LAN / Local</span>
+              </div>
+              <input 
+                type="url"
+                value={serverUrlInput}
+                onChange={(e) => setServerUrlInput(e.target.value)}
+                placeholder="https://routex-backend.onrender.com/api"
+                className="w-full bg-command-surface border border-command-border rounded-lg px-3 py-2 text-xs text-command-text font-mono focus:border-sky-500 focus:outline-none"
+              />
+              <div className="flex justify-between items-center pt-1">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    localStorage.removeItem('ROUTEX_API_URL');
+                    setServerUrlInput(getBaseUrl());
+                  }}
+                  className="text-[11px] text-slate-400 hover:text-slate-200 underline font-mono"
+                >
+                  Reset Default
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleSaveServerUrl}
+                  className="px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-lg text-xs font-mono transition"
+                >
+                  {serverSavedNotice ? 'Saved!' : 'Apply URL'}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="bg-command-panel border border-command-border rounded-2xl p-8 shadow-command-card space-y-6">
             <div className="text-center space-y-1.5">
               <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center mx-auto text-sky-400 mb-3 shadow-command-glow-cyan">

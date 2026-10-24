@@ -3,13 +3,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from .config import settings
 
+# Normalize database URL (e.g. handle Render/Heroku postgres:// -> postgresql://)
+raw_db_url = settings.DATABASE_URL
+if raw_db_url.startswith("postgres://"):
+    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+
 # If SQLite, ensure directory exists and check_same_thread=False
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+if raw_db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
     # Auto-create parent directory if path is specified (e.g. /data/routex.db for Render persistent disks)
-    if "sqlite:///" in settings.DATABASE_URL:
-        db_path_str = settings.DATABASE_URL.replace("sqlite:///", "", 1)
+    if "sqlite:///" in raw_db_url:
+        db_path_str = raw_db_url.replace("sqlite:///", "", 1)
         if db_path_str and db_path_str != ":memory:":
             try:
                 db_file = Path(db_path_str)
@@ -19,7 +24,7 @@ if settings.DATABASE_URL.startswith("sqlite"):
                 pass
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    raw_db_url,
     connect_args=connect_args,
     pool_pre_ping=True
 )

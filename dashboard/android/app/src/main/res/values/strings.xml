@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">RouteX Emergency</string>
-    <string name="title_activity_main">RouteX Emergency</string>
+    <string name="app_name">RouteX</string>
+    <string name="title_activity_main">RouteX</string>
     <string name="package_name">org.routex.app</string>
     <string name="custom_url_scheme">org.routex.app</string>
 </resources>

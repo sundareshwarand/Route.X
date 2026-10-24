@@ -191,6 +191,12 @@ async def reorder_junction_queue(
     """
     Allows a traffic control operator to manually adjust queue priorities with a documented operational reason.
     """
+    if current_user and current_user.role not in [UserRole.OPERATOR, UserRole.ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operator privileges required to reorder junction queue"
+        )
+
     junction = db.query(Junction).filter(Junction.id == junction_id).first()
     if not junction:
         raise HTTPException(

@@ -1,15 +1,28 @@
 import axios from 'axios';
 
+export const normalizeApiUrl = (url) => {
+  if (!url) return '';
+  let cleaned = url.trim().replace(/\/+$/, '');
+  if (!cleaned.endsWith('/api')) {
+    cleaned = `${cleaned}/api`;
+  }
+  return cleaned;
+};
+
 export const getBaseUrl = () => {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('ROUTEX_API_URL');
-    if (saved) return saved.replace(/\/+$/, '');
+    if (saved) return normalizeApiUrl(saved);
     const envBase = import.meta.env.VITE_API_BASE_URL;
-    if (envBase) return envBase.replace(/\/+$/, '');
+    if (envBase) return normalizeApiUrl(envBase);
     const hostname = window.location.hostname || 'localhost';
+    const isHttps = window.location.protocol === 'https:';
+    if (isHttps && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `${window.location.origin}/api`;
+    }
     return `http://${hostname}:8000/api`;
   }
-  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+  return normalizeApiUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api');
 };
 
 export const getWsUrl = () => {

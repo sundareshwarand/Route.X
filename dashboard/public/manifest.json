@@ -1,0 +1,22 @@
+{
+  "short_name": "RouteX",
+  "name": "RouteX Emergency Traffic Management",
+  "description": "Smart Emergency Response and Dynamic Traffic Corridor Coordination System",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0B1120",
+  "theme_color": "#0D9488",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}

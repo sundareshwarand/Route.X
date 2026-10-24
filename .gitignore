@@ -1,0 +1,51 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+routex.db
+test_routex.db
+*.sqlite3
+
+# Node & Dashboard
+node_modules/
+dashboard/node_modules/
+dist/
+dashboard/dist/
+dist-ssr/
+*.local
+
+# Android & Gradle
+.gradle/
+dashboard/android/.gradle/
+dashboard/android/build/
+dashboard/android/app/build/
+*.apk
+*.aab
+
+# Flutter & Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.mode1v3
+*.mode2v3
+*.moved-aside
+*.pbxuser
+*.perspectivev3
+*.xcuserdatad
+
+# Environment & Secrets
+.env
+.env.production
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

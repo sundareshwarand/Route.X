@@ -1,0 +1,1090 @@
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { 
+  MapPin, 
+  Radio, 
+  Activity, 
+  ShieldAlert, 
+  Clock, 
+  Compass, 
+  AlertTriangle, 
+  CheckCircle2, 
+  Maximize2,
+  Minimize2,
+  X,
+  Building2,
+  Navigation,
+  Layers,
+  ExternalLink,
+  Key,
+  RefreshCw,
+  Info,
+  ZoomIn,
+  ZoomOut,
+  Crosshair,
+  Eye,
+  EyeOff,
+  Filter,
+  Sliders,
+  Sparkles,
+  Shield
+} from 'lucide-react';
+import { Loader } from '@googlemaps/js-api-loader';
+import { opsService } from '../services/api';
+
+// Midnight Obsidian Tactical Palette for Google Maps Platform
+const MIDNIGHT_OBSIDIAN_STYLES = [
+  { elementType: "geometry", stylers: [{ color: "#0A0E17" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#0A0E17" }, { weight: 3 }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#64748b" }] },
+  {
+    featureType: "administrative.locality",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#94a3b8" }],
+  },
+  {
+    featureType: "poi",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#64748b" }],
+  },
+  {
+    featureType: "poi.park",
+    elementType: "geometry",
+    stylers: [{ color: "#0f172a" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#0f172a" }],
+  },
+  {
+    featureType: "road",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#94a3b8" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry",
+    stylers: [{ color: "#243247" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#cbd5e1" }],
+  },
+  {
+    featureType: "transit",
+    elementType: "geometry",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "transit.station",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#94a3b8" }],
+  },
+  {
+    featureType: "water",
+    elementType: "geometry",
+    stylers: [{ color: "#070c14" }],
+  },
+  {
+    featureType: "water",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#475569" }],
+  },
+];
+
+// Helper to produce SVG data URLs for Google Maps markers
+const createJunctionIcon = (label, color, ringColor) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">
+    <circle cx="19" cy="19" r="17" fill="#0A0E17" stroke="${ringColor}" stroke-width="3"/>
+    <circle cx="19" cy="19" r="12" fill="${color}" fill-opacity="0.35"/>
+    <text x="19" y="23" font-family="monospace" font-size="11" font-weight="bold" fill="#F8FAFC" text-anchor="middle">${label}</text>
+  </svg>`;
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+};
+
+const createHospitalIcon = (isTrauma) => {
+  const borderCol = isTrauma ? '#F43F5E' : '#38BDF8';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+    <rect x="3" y="3" width="30" height="30" rx="8" fill="#0A0E17" stroke="${borderCol}" stroke-width="2.5"/>
+    <path d="M18 10v16M10 18h16" stroke="${borderCol}" stroke-width="3.5" stroke-linecap="round"/>
+  </svg>`;
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+};
+
+const createAmbulanceIcon = (heading = 0) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+    <circle cx="20" cy="20" r="18" fill="#EF4444" fill-opacity="0.25" stroke="#EF4444" stroke-width="2"/>
+    <g transform="rotate(${heading} 20 20)">
+      <polygon points="20,7 28,31 20,26 12,31" fill="#EF4444" stroke="#FFFFFF" stroke-width="2"/>
+    </g>
+  </svg>`;
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+};
+
+export default function InteractiveMap({ simulationStatus, onSelectJunction }) {
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef({});
+  const ambulanceMarkersRef = useRef({});
+  const hospitalMarkersRef = useRef({});
+  const polylinesRef = useRef([]);
+
+  // Map state machine: 
+  // 'CONFIGURED_AND_LOADED' | 'LOADING' | 'MISSING_KEY' | 'AUTH_FAILURE' | 'QUOTA_ERROR' | 'NO_COORDINATES' | 'LOAD_FAILED'
+  const [mapState, setMapState] = useState('LOADING');
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedJunction, setSelectedJunction] = useState(null);
+  const [selectedHospital, setSelectedHospital] = useState(null);
+  const [hospitals, setHospitals] = useState([]);
+  const [retryCount, setRetryCount] = useState(0);
+
+  // Layer filters
+  const [layerVisibility, setLayerVisibility] = useState({
+    junctions: true,
+    hospitals: true,
+    ambulances: true,
+    corridors: true
+  });
+
+  // SVG Canvas Zoom & Pan
+  const [svgZoom, setSvgZoom] = useState(1);
+  const [svgPan, setSvgPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+  const ambulances = simulationStatus?.ambulances || [];
+  const junctions = simulationStatus?.junctions || [];
+  const edges = simulationStatus?.corridor_edges || [];
+
+  // Fetch registered hospitals from backend
+  useEffect(() => {
+    opsService.getHospitals().then(data => {
+      if (data && Array.isArray(data)) setHospitals(data);
+    }).catch(err => console.warn("Failed to load hospitals for map:", err));
+  }, []);
+
+  // Determine Google Maps API Key configuration
+  const rawKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const isKeyConfigured = Boolean(
+    rawKey && 
+    rawKey.trim().length > 10 && 
+    !rawKey.includes('your_google_maps_api_key') && 
+    !rawKey.includes('REPLACE_WITH')
+  );
+
+  // Initialize Google Maps or detect missing/error state
+  useEffect(() => {
+    if (!isKeyConfigured) {
+      setMapState('MISSING_KEY');
+      return;
+    }
+
+    if (junctions.length === 0) {
+      setMapState('NO_COORDINATES');
+      return;
+    }
+
+    setMapState('LOADING');
+    setErrorMessage(null);
+
+    // Global Google Maps Auth Failure listener
+    window.gm_authFailure = () => {
+      console.warn("Google Maps API auth failure detected.");
+      setMapState('AUTH_FAILURE');
+      setErrorMessage("Google Maps API authentication failed: Invalid API Key or Maps JavaScript API is not enabled in Google Cloud Console.");
+    };
+
+    const loader = new Loader({
+      apiKey: rawKey.trim(),
+      version: 'weekly',
+      libraries: ['places', 'geometry']
+    });
+
+    let isCancelled = false;
+
+    loader.importLibrary('maps').then(() => {
+      if (isCancelled || !mapContainerRef.current) return;
+
+      try {
+        const centerLat = junctions[0]?.lat || 28.6220;
+        const centerLon = junctions[0]?.lon || 77.2190;
+
+        const map = new window.google.maps.Map(mapContainerRef.current, {
+          center: { lat: centerLat, lng: centerLon },
+          zoom: 14,
+          styles: MIDNIGHT_OBSIDIAN_STYLES,
+          disableDefaultUI: true,
+          zoomControl: false, // We provide unified custom controls
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          backgroundColor: '#0A0E17'
+        });
+
+        mapInstanceRef.current = map;
+        setMapState('CONFIGURED_AND_LOADED');
+      } catch (err) {
+        console.error("Failed to instantiate Google Map:", err);
+        setMapState('LOAD_FAILED');
+        setErrorMessage(err.message || "Failed to render Google Map");
+      }
+    }).catch(err => {
+      console.error("Google Maps API Loader Error:", err);
+      if (err.message && (err.message.includes('Quota') || err.message.includes('billing'))) {
+        setMapState('QUOTA_ERROR');
+        setErrorMessage("Google Maps billing/quota limit reached. Verify billing account in Google Cloud Console.");
+      } else if (err.message && (err.message.includes('Key') || err.message.includes('auth'))) {
+        setMapState('AUTH_FAILURE');
+        setErrorMessage("Invalid Google Maps API Key or Maps JavaScript API not enabled.");
+      } else {
+        setMapState('LOAD_FAILED');
+        setErrorMessage(err.message || "Network error loading Google Maps Platform.");
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [rawKey, isKeyConfigured, retryCount]);
+
+  // Update Google Maps Polylines
+  useEffect(() => {
+    if (mapState !== 'CONFIGURED_AND_LOADED' || !mapInstanceRef.current || !window.google) return;
+    const map = mapInstanceRef.current;
+
+    // Clear previous polylines
+    polylinesRef.current.forEach(p => p.setMap(null));
+    polylinesRef.current = [];
+
+    if (!layerVisibility.corridors) return;
+
+    const jMap = {};
+    junctions.forEach(j => { jMap[j.id] = { lat: j.lat, lng: j.lon }; });
+
+    edges.forEach(edge => {
+      const p1 = jMap[edge.from];
+      const p2 = jMap[edge.to];
+      if (p1 && p2) {
+        const isActive = edge.active;
+        const poly = new window.google.maps.Polyline({
+          path: [p1, p2],
+          geodesic: true,
+          strokeColor: isActive ? '#38BDF8' : '#243247',
+          strokeOpacity: isActive ? 0.95 : 0.6,
+          strokeWeight: isActive ? 5 : 3,
+          map: map
+        });
+        polylinesRef.current.push(poly);
+      }
+    });
+  }, [junctions, edges, mapState, layerVisibility.corridors]);
+
+  // Update Google Maps Junction Pins
+  useEffect(() => {
+    if (mapState !== 'CONFIGURED_AND_LOADED' || !mapInstanceRef.current || !window.google) return;
+    const map = mapInstanceRef.current;
+
+    junctions.forEach(j => {
+      const isPriority = j.signal_state === 'PRIORITY_ACTIVE';
+      const isClearance = j.signal_state === 'FAILSAFE_ALL_RED';
+      const isOffline = !j.is_online;
+
+      const ringColor = isOffline ? '#475569' : isPriority ? '#34D399' : isClearance ? '#F43F5E' : '#38BDF8';
+      const fillColor = isOffline ? '#1E293B' : isPriority ? '#10B981' : isClearance ? '#EF4444' : '#0284C7';
+      const iconUrl = createJunctionIcon(j.id.replace('JNC-', 'J'), fillColor, ringColor);
+
+      if (markersRef.current[j.id]) {
+        markersRef.current[j.id].setIcon(iconUrl);
+        markersRef.current[j.id].setPosition({ lat: j.lat, lng: j.lon });
+        markersRef.current[j.id].setVisible(layerVisibility.junctions);
+      } else {
+        const marker = new window.google.maps.Marker({
+          position: { lat: j.lat, lng: j.lon },
+          map: map,
+          title: `${j.name} (${j.id})`,
+          icon: iconUrl,
+          visible: layerVisibility.junctions
+        });
+
+        marker.addListener('click', () => {
+          setSelectedJunction(j);
+          setSelectedHospital(null);
+          if (onSelectJunction) onSelectJunction(j);
+        });
+
+        markersRef.current[j.id] = marker;
+      }
+    });
+  }, [junctions, mapState, layerVisibility.junctions]);
+
+  // Update Google Maps Ambulance Pins
+  useEffect(() => {
+    if (mapState !== 'CONFIGURED_AND_LOADED' || !mapInstanceRef.current || !window.google) return;
+    const map = mapInstanceRef.current;
+
+    ambulances.forEach(amb => {
+      const iconUrl = createAmbulanceIcon(amb.heading || 0);
+
+      if (ambulanceMarkersRef.current[amb.id]) {
+        ambulanceMarkersRef.current[amb.id].setIcon(iconUrl);
+        ambulanceMarkersRef.current[amb.id].setPosition({ lat: amb.current_lat, lng: amb.current_lon });
+        ambulanceMarkersRef.current[amb.id].setVisible(layerVisibility.ambulances);
+      } else {
+        const marker = new window.google.maps.Marker({
+          position: { lat: amb.current_lat, lng: amb.current_lon },
+          map: map,
+          title: `${amb.call_sign} [${amb.speed_kmh} km/h]`,
+          icon: iconUrl,
+          zIndex: 999,
+          visible: layerVisibility.ambulances
+        });
+        ambulanceMarkersRef.current[amb.id] = marker;
+      }
+    });
+  }, [ambulances, mapState, layerVisibility.ambulances]);
+
+  // Update Google Maps Hospital Pins
+  useEffect(() => {
+    if (mapState !== 'CONFIGURED_AND_LOADED' || !mapInstanceRef.current || !window.google || hospitals.length === 0) return;
+    const map = mapInstanceRef.current;
+
+    hospitals.forEach(h => {
+      const isTrauma = h.readiness_status === 'TRAUMA_READY';
+      const iconUrl = createHospitalIcon(isTrauma);
+      const lat = h.latitude + 0.0012;
+      const lon = h.longitude + 0.0012;
+
+      if (hospitalMarkersRef.current[h.id]) {
+        hospitalMarkersRef.current[h.id].setPosition({ lat, lng: lon });
+        hospitalMarkersRef.current[h.id].setVisible(layerVisibility.hospitals);
+      } else {
+        const marker = new window.google.maps.Marker({
+          position: { lat, lng: lon },
+          map: map,
+          title: `${h.name} [${h.readiness_status}]`,
+          icon: iconUrl,
+          visible: layerVisibility.hospitals
+        });
+
+        marker.addListener('click', () => {
+          setSelectedHospital(h);
+          setSelectedJunction(null);
+        });
+
+        hospitalMarkersRef.current[h.id] = marker;
+      }
+    });
+  }, [hospitals, mapState, layerVisibility.hospitals]);
+
+  // Zoom and Recenter Controls
+  const handleZoomIn = () => {
+    if (mapState === 'CONFIGURED_AND_LOADED' && mapInstanceRef.current) {
+      mapInstanceRef.current.setZoom(mapInstanceRef.current.getZoom() + 1);
+    } else {
+      setSvgZoom(z => Math.min(2.5, z + 0.25));
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (mapState === 'CONFIGURED_AND_LOADED' && mapInstanceRef.current) {
+      mapInstanceRef.current.setZoom(mapInstanceRef.current.getZoom() - 1);
+    } else {
+      setSvgZoom(z => Math.max(0.75, z - 0.25));
+    }
+  };
+
+  const handleFitCorridor = () => {
+    if (mapState === 'CONFIGURED_AND_LOADED' && mapInstanceRef.current && window.google) {
+      const bounds = new window.google.maps.LatLngBounds();
+      junctions.forEach(j => bounds.extend({ lat: j.lat, lng: j.lon }));
+      hospitals.forEach(h => bounds.extend({ lat: h.latitude, lng: h.longitude }));
+      ambulances.forEach(a => bounds.extend({ lat: a.current_lat, lng: a.current_lon }));
+      mapInstanceRef.current.fitBounds(bounds, { top: 50, bottom: 50, left: 50, right: 50 });
+    } else {
+      setSvgZoom(1);
+      setSvgPan({ x: 0, y: 0 });
+    }
+  };
+
+  // High-precision SVG Projection helpers for Fallback Vector Canvas
+  const projectedCoordinates = useMemo(() => {
+    // Delhi NCR Arterial Testbed Coordinates: lat ~28.61 to ~28.633, lon ~77.205 to ~77.235
+    const latMin = 28.6100;
+    const latMax = 28.6330;
+    const lonMin = 77.2050;
+    const lonMax = 77.2350;
+
+    const width = 840;
+    const height = 500;
+    const padding = 70;
+
+    const project = (lat, lon) => {
+      const x = padding + ((lon - lonMin) / (lonMax - lonMin)) * (width - 2 * padding);
+      const y = height - padding - ((lat - latMin) / (latMax - latMin)) * (height - 2 * padding);
+      return { 
+        x: Math.max(padding, Math.min(width - padding, x)), 
+        y: Math.max(padding, Math.min(height - padding, y)) 
+      };
+    };
+
+    const jCoords = {};
+    junctions.forEach(j => {
+      jCoords[j.id] = project(j.lat || 28.62, j.lon || 77.22);
+    });
+
+    const hCoords = {};
+    hospitals.forEach(h => {
+      hCoords[h.id] = project((h.latitude || 28.62) + 0.0015, (h.longitude || 77.22) + 0.0015);
+    });
+
+    const ambCoords = ambulances.map(a => ({
+      ...a,
+      pos: project(a.current_lat || 28.62, a.current_lon || 77.22)
+    }));
+
+    return { jCoords, hCoords, ambCoords };
+  }, [junctions, hospitals, ambulances]);
+
+  // SVG Pan Handlers
+  const handleMouseDown = (e) => {
+    if (mapState === 'CONFIGURED_AND_LOADED') return;
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - svgPan.x, y: e.clientY - svgPan.y });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isPanning || mapState === 'CONFIGURED_AND_LOADED') return;
+    setSvgPan({
+      x: e.clientX - panStart.x,
+      y: e.clientY - panStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsPanning(false);
+  };
+
+  return (
+    <div className={`relative bg-command-panel border border-command-border rounded-xl overflow-hidden shadow-command-card flex flex-col transition-all duration-300 ${
+      isExpanded ? 'h-[740px]' : 'h-[560px]'
+    }`}>
+      {/* Top Map Operations Command Bar */}
+      <div className="px-4 py-3 bg-command-panel border-b border-command-border flex flex-wrap items-center justify-between gap-3 z-10">
+        <div className="flex items-center space-x-3">
+          <div className="p-2 bg-sky-500/10 border border-sky-500/30 rounded-lg text-sky-400">
+            <Radio className="w-4 h-4 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h3 className="text-xs font-bold text-slate-100 tracking-wide">
+                Arterial Emergency Corridor GIS
+              </h3>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                mapState === 'CONFIGURED_AND_LOADED' 
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' 
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              }`}>
+                {mapState === 'CONFIGURED_AND_LOADED' ? 'GOOGLE MAPS LIVE' : 'VECTOR FALLBACK'}
+              </span>
+            </div>
+            <p className="text-[11px] text-command-muted font-mono">
+              Delhi NCR Arterial Testbed Grid • Live Interlocking &amp; Telemetry
+            </p>
+          </div>
+        </div>
+
+        {/* Tactical Control Buttons & Layer Filters */}
+        <div className="flex items-center space-x-2">
+          {/* Layer Filter Toggles */}
+          <div className="hidden sm:flex items-center bg-command-surface border border-command-border rounded-lg p-0.5 text-[11px] font-mono">
+            <button
+              onClick={() => setLayerVisibility(l => ({ ...l, junctions: !l.junctions }))}
+              className={`px-2 py-1 rounded transition flex items-center space-x-1 ${
+                layerVisibility.junctions ? 'bg-sky-500/20 text-sky-300 font-bold' : 'text-command-muted hover:text-slate-300'
+              }`}
+              title="Toggle Junctions"
+            >
+              <MapPin className="w-3 h-3" />
+              <span>JNC</span>
+            </button>
+            <button
+              onClick={() => setLayerVisibility(l => ({ ...l, hospitals: !l.hospitals }))}
+              className={`px-2 py-1 rounded transition flex items-center space-x-1 ${
+                layerVisibility.hospitals ? 'bg-rose-500/20 text-rose-300 font-bold' : 'text-command-muted hover:text-slate-300'
+              }`}
+              title="Toggle Hospitals"
+            >
+              <span>🏥</span>
+              <span>HOSP</span>
+            </button>
+            <button
+              onClick={() => setLayerVisibility(l => ({ ...l, corridors: !l.corridors }))}
+              className={`px-2 py-1 rounded transition flex items-center space-x-1 ${
+                layerVisibility.corridors ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-command-muted hover:text-slate-300'
+              }`}
+              title="Toggle Preemption Corridors"
+            >
+              <Navigation className="w-3 h-3" />
+              <span>LINKS</span>
+            </button>
+          </div>
+
+          {/* Navigation Controls */}
+          <div className="flex items-center space-x-1 bg-command-surface border border-command-border rounded-lg p-0.5">
+            <button
+              onClick={handleZoomIn}
+              className="p-1.5 hover:bg-command-border text-slate-300 hover:text-sky-400 rounded transition"
+              title="Zoom In"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleZoomOut}
+              className="p-1.5 hover:bg-command-border text-slate-300 hover:text-sky-400 rounded transition"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleFitCorridor}
+              className="p-1.5 hover:bg-command-border text-slate-300 hover:text-emerald-400 rounded transition"
+              title="Fit Corridor Bounds & Recenter"
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Expand / Minimize Toggle */}
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="p-1.5 bg-command-surface hover:bg-command-border border border-command-border text-slate-300 hover:text-sky-400 rounded-lg transition"
+            title={isExpanded ? "Collapse View" : "Expand Full View"}
+          >
+            {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Key Setup Trigger */}
+          <button
+            onClick={() => setShowSetupModal(true)}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-command-surface hover:bg-command-border border border-command-border text-slate-300 hover:text-amber-400 rounded-lg text-xs font-mono transition"
+            title="Google Maps Platform Setup Guide"
+          >
+            <Key className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden md:inline text-[11px]">Map Config</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Main Map Canvas Area */}
+      <div 
+        className="relative flex-1 w-full h-full bg-[#0A0E17] overflow-hidden select-none cursor-grab active:cursor-grabbing"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+      >
+        {/* Google Maps Container */}
+        <div 
+          ref={mapContainerRef} 
+          className={`w-full h-full transition-opacity duration-500 ${
+            mapState === 'CONFIGURED_AND_LOADED' ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none'
+          }`} 
+        />
+
+        {/* High-Precision Interactive SVG Vector Fallback Canvas */}
+        {mapState !== 'CONFIGURED_AND_LOADED' && (
+          <div className="absolute inset-0 w-full h-full bg-[#0A0E17]">
+            <svg 
+              className="w-full h-full transition-transform duration-75" 
+              viewBox="0 0 840 500" 
+              preserveAspectRatio="xMidYMid meet"
+              style={{
+                transform: `scale(${svgZoom}) translate(${svgPan.x}px, ${svgPan.y}px)`,
+                transformOrigin: 'center center'
+              }}
+            >
+              <defs>
+                <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feGaussianBlur stdDeviation="3.5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <radialGradient id="radar-pulse" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#38BDF8" stopOpacity="0" />
+                </radialGradient>
+              </defs>
+
+              {/* Tactical Grid Background Pattern */}
+              <g stroke="#1E293B" strokeWidth="0.75" opacity="0.45">
+                {[...Array(12)].map((_, i) => (
+                  <line key={`h-${i}`} x1="0" y1={i * 45} x2="840" y2={i * 45} />
+                ))}
+                {[...Array(19)].map((_, i) => (
+                  <line key={`v-${i}`} x1={i * 46} y1="0" x2={i * 46} y2="500" />
+                ))}
+              </g>
+
+              {/* Corridor Road Edges */}
+              {layerVisibility.corridors && edges.map((edge, idx) => {
+                const p1 = projectedCoordinates.jCoords[edge.from];
+                const p2 = projectedCoordinates.jCoords[edge.to];
+                if (!p1 || !p2) return null;
+
+                const isActive = edge.active;
+                return (
+                  <g key={`edge-${idx}`}>
+                    {isActive && (
+                      <line
+                        x1={p1.x} y1={p1.y}
+                        x2={p2.x} y2={p2.y}
+                        stroke="#38BDF8"
+                        strokeWidth="8"
+                        strokeOpacity="0.35"
+                        filter="url(#neon-glow)"
+                      />
+                    )}
+                    <line
+                      x1={p1.x} y1={p1.y}
+                      x2={p2.x} y2={p2.y}
+                      stroke={isActive ? '#38BDF8' : '#334155'}
+                      strokeWidth={isActive ? '4' : '2'}
+                      strokeDasharray={isActive ? undefined : '5,5'}
+                      strokeLinecap="round"
+                    />
+                  </g>
+                );
+              })}
+
+              {/* Hospital Receiving Nodes */}
+              {layerVisibility.hospitals && hospitals.map(h => {
+                const pos = projectedCoordinates.hCoords[h.id];
+                if (!pos) return null;
+                const isTrauma = h.readiness_status === 'TRAUMA_READY';
+
+                return (
+                  <g 
+                    key={`hosp-${h.id}`}
+                    className="cursor-pointer transition-transform hover:scale-110"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedHospital(h);
+                      setSelectedJunction(null);
+                    }}
+                  >
+                    <rect
+                      x={pos.x - 17}
+                      y={pos.y - 17}
+                      width="34"
+                      height="34"
+                      rx="8"
+                      fill="#0A0E17"
+                      stroke={isTrauma ? '#F43F5E' : '#38BDF8'}
+                      strokeWidth="2.5"
+                    />
+                    <text x={pos.x} y={pos.y + 4} textAnchor="middle" fontSize="13">🏥</text>
+                    <text
+                      x={pos.x}
+                      y={pos.y - 21}
+                      textAnchor="middle"
+                      fill="#E2E8F0"
+                      fontSize="9"
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                    >
+                      {h.name.split(' ')[0]}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Junction Interlocking Nodes */}
+              {layerVisibility.junctions && junctions.map(j => {
+                const pos = projectedCoordinates.jCoords[j.id];
+                if (!pos) return null;
+
+                const isPriority = j.signal_state === 'PRIORITY_ACTIVE';
+                const isClearance = j.signal_state === 'FAILSAFE_ALL_RED';
+                const isOffline = !j.is_online;
+
+                const strokeCol = isOffline ? '#475569' : isPriority ? '#34D399' : isClearance ? '#F43F5E' : '#38BDF8';
+                const fillCol = isOffline ? '#1E293B' : isPriority ? '#064E3B' : isClearance ? '#4C0519' : '#0B2342';
+
+                return (
+                  <g 
+                    key={`jnc-${j.id}`}
+                    className="cursor-pointer group"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedJunction(j);
+                      setSelectedHospital(null);
+                      if (onSelectJunction) onSelectJunction(j);
+                    }}
+                  >
+                    {isPriority && (
+                      <circle
+                        cx={pos.x} cy={pos.y}
+                        r="26"
+                        fill="none"
+                        stroke="#34D399"
+                        strokeWidth="1.5"
+                        opacity="0.6"
+                        className="animate-ping"
+                      />
+                    )}
+                    <circle
+                      cx={pos.x} cy={pos.y}
+                      r="17"
+                      fill={fillCol}
+                      stroke={strokeCol}
+                      strokeWidth="2.5"
+                    />
+                    <text
+                      x={pos.x} y={pos.y + 4}
+                      textAnchor="middle"
+                      fill="#F8FAFC"
+                      fontSize="10"
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                    >
+                      {j.id.replace('JNC-', 'J')}
+                    </text>
+                    <text
+                      x={pos.x} y={pos.y + 30}
+                      textAnchor="middle"
+                      fill="#94A3B8"
+                      fontSize="9"
+                      fontFamily="monospace"
+                    >
+                      {j.name.split(' ')[0]}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Active Ambulance Marker */}
+              {layerVisibility.ambulances && projectedCoordinates.ambCoords.map(amb => (
+                <g key={`amb-${amb.id}`} transform={`translate(${amb.pos.x}, ${amb.pos.y})`}>
+                  <circle cx="0" cy="0" r="22" fill="url(#radar-pulse)" className="animate-ping" />
+                  <circle cx="0" cy="0" r="14" fill="#EF4444" stroke="#FFFFFF" strokeWidth="2" />
+                  <polygon
+                    points="0,-7 6,7 0,4 -6,7"
+                    fill="#FFFFFF"
+                    transform={`rotate(${amb.heading || 0})`}
+                  />
+                  <rect x="-35" y="-30" width="70" height="15" rx="3" fill="#1E293B" stroke="#EF4444" strokeWidth="1" />
+                  <text x="0" y="-20" textAnchor="middle" fill="#FFFFFF" fontSize="8" fontFamily="monospace" fontWeight="bold">
+                    {amb.call_sign}
+                  </text>
+                </g>
+              ))}
+
+              {/* Tactical Scale Indicator */}
+              <g transform="translate(30, 470)" stroke="#64748B" strokeWidth="1">
+                <line x1="0" y1="0" x2="60" y2="0" />
+                <line x1="0" y1="-4" x2="0" y2="4" />
+                <line x1="60" y1="-4" x2="60" y2="4" />
+                <text x="30" y="-6" textAnchor="middle" fill="#64748B" fontSize="8" fontFamily="monospace" stroke="none">500 METERS</text>
+              </g>
+
+              {/* Compass Rose */}
+              <g transform="translate(805, 35)">
+                <circle cx="0" cy="0" r="14" fill="#111827" stroke="#334155" strokeWidth="1" />
+                <polygon points="0,-11 3,0 0,-3 -3,0" fill="#38BDF8" />
+                <polygon points="0,11 3,0 0,3 -3,0" fill="#64748B" />
+                <text x="0" y="-13" textAnchor="middle" fill="#38BDF8" fontSize="7" fontFamily="monospace" fontWeight="bold">N</text>
+              </g>
+            </svg>
+          </div>
+        )}
+
+        {/* State Notice Banners */}
+        {mapState === 'MISSING_KEY' && (
+          <div className="absolute top-3 inset-x-4 z-20 flex items-center justify-between p-2.5 bg-sky-950/90 border border-sky-800/80 rounded-lg text-xs text-sky-200 backdrop-blur-md shadow-lg">
+            <div className="flex items-center space-x-2">
+              <Info className="w-4 h-4 text-sky-400 flex-shrink-0" />
+              <span>Interactive SVG Vector Canvas active. To display official Google Maps satellite &amp; street tiles, configure <code className="bg-sky-900/60 px-1 py-0.5 rounded font-mono text-sky-300">VITE_GOOGLE_MAPS_API_KEY</code>.</span>
+            </div>
+            <button
+              onClick={() => setShowSetupModal(true)}
+              className="px-2.5 py-1 bg-sky-500 hover:bg-sky-400 text-slate-950 rounded font-semibold text-[11px] font-mono transition shrink-0 ml-2"
+            >
+              Setup Guide
+            </button>
+          </div>
+        )}
+
+        {mapState === 'AUTH_FAILURE' && (
+          <div className="absolute top-3 inset-x-4 z-20 flex items-center justify-between p-2.5 bg-rose-950/90 border border-rose-800/80 rounded-lg text-xs text-rose-200 backdrop-blur-md shadow-lg">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+              <span>Google Maps Auth Failure: Maps JavaScript API is not enabled or key is invalid. Vector canvas active.</span>
+            </div>
+            <button
+              onClick={() => setRetryCount(c => c + 1)}
+              className="px-2.5 py-1 bg-rose-500 hover:bg-rose-400 text-white rounded font-semibold text-[11px] font-mono transition shrink-0 ml-2"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {mapState === 'QUOTA_ERROR' && (
+          <div className="absolute top-3 inset-x-4 z-20 flex items-center justify-between p-2.5 bg-amber-950/90 border border-amber-800/80 rounded-lg text-xs text-amber-200 backdrop-blur-md shadow-lg">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span>Google Maps billing or quota limit reached. Vector canvas active as operational fallback.</span>
+            </div>
+          </div>
+        )}
+
+        {mapState === 'LOADING' && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-command-bg/90 p-6 text-center">
+            <div className="w-10 h-10 border-4 border-sky-500/30 border-t-sky-400 rounded-full animate-spin mb-3"></div>
+            <p className="text-xs text-slate-200 font-semibold font-mono">Initializing Google Maps Platform...</p>
+            <p className="text-[11px] text-command-muted mt-1">Applying Midnight Obsidian arterial theme</p>
+          </div>
+        )}
+
+        {/* Floating Ambulance Telemetry Overlay Card */}
+        {ambulances.length > 0 && (
+          <div className="absolute top-16 left-4 z-20 max-w-xs bg-command-panel/95 backdrop-blur-md border border-command-border rounded-xl p-3 shadow-command-card space-y-2">
+            <div className="flex items-center justify-between pb-2 border-b border-command-border">
+              <div className="flex items-center space-x-2">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
+                <span className="font-mono text-xs font-bold text-slate-100">{ambulances[0].call_sign}</span>
+              </div>
+              <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono text-[10px] font-bold border border-rose-500/30">
+                {ambulances[0].triage_priority}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+              <div>
+                <span className="text-command-muted block text-[10px]">CURRENT SPEED</span>
+                <span className="text-sky-400 font-bold">{ambulances[0].speed_kmh} km/h</span>
+              </div>
+              <div>
+                <span className="text-command-muted block text-[10px]">CORRIDOR ETA</span>
+                <span className="text-amber-400 font-bold">{ambulances[0].eta_seconds}s</span>
+              </div>
+              <div>
+                <span className="text-command-muted block text-[10px]">NEXT JUNCTION</span>
+                <span className="text-slate-100 font-bold">{ambulances[0].approaching_junction}</span>
+              </div>
+              <div>
+                <span className="text-command-muted block text-[10px]">DISTANCE</span>
+                <span className="text-slate-300">{Math.round(ambulances[0].distance_to_junction || 0)}m</span>
+              </div>
+            </div>
+
+            <div className="pt-1 text-[10px] text-command-muted flex items-center justify-between border-t border-command-border/50">
+              <span>Status: <strong className="text-emerald-400">{ambulances[0].status}</strong></span>
+              <span className="text-command-subtext">Leg {ambulances[0].current_leg_index + 1}/{ambulances[0].route?.length}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Selected Junction Tactical Inspector Drawer */}
+        {selectedJunction && (
+          <div className="absolute bottom-4 right-4 z-20 w-84 bg-command-panel/95 backdrop-blur-md border border-command-border rounded-xl p-4 shadow-command-card space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="font-bold text-xs text-slate-100">{selectedJunction.name}</h4>
+                <p className="font-mono text-[10px] text-command-muted">ID: {selectedJunction.id} | Zone: {selectedJunction.zone}</p>
+              </div>
+              <button 
+                onClick={() => setSelectedJunction(null)}
+                className="text-command-muted hover:text-slate-100 p-1 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-2.5 bg-command-surface rounded-lg border border-command-border/70 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Signal State:</span>
+                <span className={`font-mono font-bold ${
+                  selectedJunction.signal_state === 'PRIORITY_ACTIVE' ? 'text-emerald-400' :
+                  selectedJunction.signal_state === 'FAILSAFE_ALL_RED' ? 'text-rose-400' : 'text-sky-400'
+                }`}>
+                  {selectedJunction.signal_state}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Current Priority:</span>
+                <span className="font-mono text-slate-200">{selectedJunction.granted_to || 'None (Normal Cycle)'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Queued Vehicles:</span>
+                <span className="font-mono text-amber-400">{selectedJunction.queue?.length || 0}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Gateway Status:</span>
+                <span className={selectedJunction.is_online ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                  {selectedJunction.is_online ? 'ESP8266 Online' : 'Heartbeat Lost'}
+                </span>
+              </div>
+            </div>
+
+            <div className="text-[10px] text-command-muted font-mono flex items-center justify-between">
+              <span>GPS: {selectedJunction.lat?.toFixed(4)}, {selectedJunction.lon?.toFixed(4)}</span>
+              <span className="text-sky-400">Interlocked Controller</span>
+            </div>
+          </div>
+        )}
+
+        {/* Selected Hospital Tactical Inspector Drawer */}
+        {selectedHospital && (
+          <div className="absolute bottom-4 left-4 z-20 w-84 bg-command-panel/95 backdrop-blur-md border border-command-border rounded-xl p-4 shadow-command-card space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-base">🏥</span>
+                  <h4 className="font-bold text-xs text-slate-100">{selectedHospital.name}</h4>
+                </div>
+                <p className="font-mono text-[10px] text-command-muted">ID: {selectedHospital.id} • At {selectedHospital.junction_id}</p>
+              </div>
+              <button 
+                onClick={() => setSelectedHospital(null)}
+                className="text-command-muted hover:text-slate-100 p-1 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-2.5 bg-command-surface rounded-lg border border-command-border/70 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Readiness Status:</span>
+                <span className={`font-mono font-bold ${
+                  selectedHospital.readiness_status === 'TRAUMA_READY' ? 'text-rose-400' : 'text-sky-400'
+                }`}>
+                  {selectedHospital.readiness_status}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Available ICU Beds:</span>
+                <span className="font-mono font-bold text-emerald-400">{selectedHospital.available_icu_beds} / {selectedHospital.total_icu_beds}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Specialties:</span>
+                <span className="text-slate-200 text-[11px] truncate max-w-[180px]" title={selectedHospital.specialties}>
+                  {selectedHospital.specialties || 'Emergency Medicine'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-command-subtext">Patient Intake:</span>
+                <span className={selectedHospital.is_accepting_emergencies ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                  {selectedHospital.is_accepting_emergencies ? 'ACCEPTING PATIENTS' : 'DIVERTING'}
+                </span>
+              </div>
+            </div>
+
+            <div className="text-[10px] text-command-muted font-mono flex items-center justify-between">
+              <span>GPS: {selectedHospital.latitude?.toFixed(4)}, {selectedHospital.longitude?.toFixed(4)}</span>
+              <span className="text-sky-400">Receiving Trauma Hub</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Attribution & Legend Footer Strip */}
+      <div className="px-4 py-2 bg-command-panel/90 border-t border-command-border/60 flex flex-wrap items-center justify-between gap-2 text-[10px] text-command-muted">
+        <div className="flex items-center space-x-3">
+          <span>
+            {mapState === 'CONFIGURED_AND_LOADED' 
+              ? 'Map tiles © Google Maps Platform • Midnight Obsidian Arterial Layer' 
+              : 'RouteX High-Precision Vector Canvas • Delhi NCR Arterial Coordinate Feed'}
+          </span>
+        </div>
+
+        <div className="flex items-center space-x-4 font-mono">
+          <span className="flex items-center space-x-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span>Priority Wave</span>
+          </span>
+          <span className="flex items-center space-x-1">
+            <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+            <span>2s All-Red</span>
+          </span>
+          <span className="flex items-center space-x-1">
+            <span className="w-2 h-2 rounded-full bg-sky-400"></span>
+            <span>Normal Cycle</span>
+          </span>
+          <span className="text-sky-400 font-semibold uppercase">Authoritative Interlock</span>
+        </div>
+      </div>
+
+      {/* Google Maps API Key Setup Instructions Modal */}
+      {showSetupModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-command-panel border border-command-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-command-border">
+              <div className="flex items-center space-x-2">
+                <div className="p-2 bg-sky-500/10 border border-sky-500/20 rounded-lg text-sky-400">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-100">Google Maps Platform Activation</h3>
+                  <p className="text-[11px] text-command-muted">Enable high-resolution satellite &amp; street basemaps</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowSetupModal(false)}
+                className="text-command-muted hover:text-slate-100 p-1 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-300">
+              <p>
+                RouteX includes a built-in <strong className="text-sky-400">High-Precision SVG Vector Canvas</strong> that works immediately without any external API keys. To upgrade to live Google Maps tiles:
+              </p>
+
+              <ol className="list-decimal list-inside space-y-2 bg-command-surface p-3 rounded-lg border border-command-border font-mono text-[11px]">
+                <li>Open the <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" className="text-sky-400 underline inline-flex items-center">Google Cloud Console <ExternalLink className="w-3 h-3 ml-1" /></a>.</li>
+                <li>Select your project and enable the <strong className="text-emerald-400">Maps JavaScript API</strong>.</li>
+                <li>Create an API Key under Credentials (restrict key to HTTP referrers: <code className="text-sky-300">http://localhost:5173/*</code>).</li>
+                <li>Add your key to <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">dashboard/.env.local</code>:</li>
+              </ol>
+
+              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[11px] text-emerald-400 select-all">
+                VITE_GOOGLE_MAPS_API_KEY=AIzaSy...your_actual_key_here
+              </div>
+
+              <div className="p-2.5 bg-amber-950/40 border border-amber-800/40 rounded-lg text-[10px] text-amber-300/90 flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <span>Security rule: Never put your Gemini API key in frontend environment variables. <code className="font-bold">.env.local</code> is git-ignored.</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowSetupModal(false)}
+                className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-lg text-xs font-mono transition"
+              >
+                Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

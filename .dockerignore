@@ -1,0 +1,15 @@
+.git
+.github
+node_modules
+dashboard/node_modules
+dashboard/dist
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+*.db
+*.sqlite3
+.env
+.env.local
+android

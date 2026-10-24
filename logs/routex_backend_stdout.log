@@ -6885,3 +6885,8 @@ INFO:     127.0.0.1:51168 - "GET /api/alerts HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57548 - "GET /api/analytics/summary HTTP/1.1" 200 OK
 INFO:     127.0.0.1:61965 - "GET / HTTP/1.1" 200 OK
 INFO:     127.0.0.1:55210 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50425 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63864 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63868 - "POST /api/auth/login HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:63872 - "POST /api/auth/login/json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63878 - "POST /api/auth/login HTTP/1.1" 401 Unauthorized

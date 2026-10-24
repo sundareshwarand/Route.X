@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import engine, Base, SessionLocal
 from .models import User, UserRole, Ambulance, Junction, SignalState, RegisteredDevice, DeviceType, Hospital, HospitalReadiness, utc_now
-from .auth import hash_password
+from .auth import hash_password, verify_password
 from .services.ws_manager import ws_manager
 
 from .routers import auth, ambulances, junctions, emergency, hardware, alerts, analytics, reliability, simulation, hospitals, ai
@@ -18,11 +18,14 @@ logger = logging.getLogger("routex")
 def seed_initial_data():
     """
     Seeds initial default users, ambulances, and junctions for immediate testing.
+    Also ensures demo account credentials remain valid across database restarts.
     """
     db = SessionLocal()
     try:
         # 1. Seed Users
-        if not db.query(User).filter(User.email == "operator@routex.org").first():
+        from sqlalchemy import func
+        operator = db.query(User).filter(func.lower(User.email) == "operator@routex.org").first()
+        if not operator:
             operator = User(
                 email="operator@routex.org",
                 hashed_password=hash_password("operator123"),
@@ -54,6 +57,21 @@ def seed_initial_data():
             db.add_all([operator, admin, driver, citizen])
             db.commit()
             logger.info("Default seed users created successfully.")
+        else:
+            # Ensure operator and driver demo passwords verify correctly in cloud deployments
+            updated = False
+            if not verify_password("operator123", operator.hashed_password):
+                operator.hashed_password = hash_password("operator123")
+                operator.is_active = True
+                updated = True
+            driver = db.query(User).filter(func.lower(User.email) == "driver1@routex.org").first()
+            if driver and not verify_password("driver123", driver.hashed_password):
+                driver.hashed_password = hash_password("driver123")
+                driver.is_active = True
+                updated = True
+            if updated:
+                db.commit()
+                logger.info("Demo account passwords refreshed for cloud access.")
 
         # 2. Seed Ambulances
         if not db.query(Ambulance).filter(Ambulance.id == "AMB-01").first():

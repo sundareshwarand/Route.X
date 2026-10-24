@@ -1,5 +1,7 @@
 import axios from 'axios';
 
+export const DEFAULT_CLOUD_API_URL = 'https://routex-backend.onrender.com/api';
+
 export const normalizeApiUrl = (url) => {
   if (!url) return '';
   let cleaned = url.trim().replace(/\/+$/, '');
@@ -11,10 +13,28 @@ export const normalizeApiUrl = (url) => {
 
 export const getBaseUrl = () => {
   if (typeof window !== 'undefined') {
+    // In Capacitor Android app, check if we're on mobile
+    const isCapacitor = !!(window.Capacitor || (window.location.protocol === 'https:' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')));
+
     const saved = localStorage.getItem('ROUTEX_API_URL');
-    if (saved) return normalizeApiUrl(saved);
+    if (saved && saved.trim()) {
+      const normalizedSaved = normalizeApiUrl(saved);
+      // On mobile APK, discard any stale localhost/127.0.0.1 left from prior sessions
+      if (isCapacitor && (normalizedSaved.includes('localhost') || normalizedSaved.includes('127.0.0.1'))) {
+        localStorage.removeItem('ROUTEX_API_URL');
+      } else {
+        return normalizedSaved;
+      }
+    }
+
     const envBase = import.meta.env.VITE_API_BASE_URL;
-    if (envBase) return normalizeApiUrl(envBase);
+    if (envBase && envBase.trim()) return normalizeApiUrl(envBase);
+
+    // In Capacitor Android app, default to public cloud endpoint instead of local loopback
+    if (isCapacitor) {
+      return DEFAULT_CLOUD_API_URL;
+    }
+
     const hostname = window.location.hostname || 'localhost';
     const isHttps = window.location.protocol === 'https:';
     if (isHttps && hostname !== 'localhost' && hostname !== '127.0.0.1') {
@@ -22,7 +42,7 @@ export const getBaseUrl = () => {
     }
     return `http://${hostname}:8000/api`;
   }
-  return normalizeApiUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api');
+  return normalizeApiUrl(import.meta.env.VITE_API_BASE_URL || DEFAULT_CLOUD_API_URL);
 };
 
 export const getWsUrl = () => {

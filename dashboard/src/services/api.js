@@ -70,6 +70,7 @@ export const getWsUrl = () => {
 
 export const api = axios.create({
   baseURL: getBaseUrl(),
+  timeout: 15000, // 15-second timeout for mobile/cloud networks
   headers: {
     'Content-Type': 'application/json',
   },
@@ -84,16 +85,108 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+export const formatAuthError = (err) => {
+  if (!err) return 'Unknown authentication error.';
+
+  // 1. Timeout / abort
+  if (err.code === 'ECONNABORTED' || (err.message && err.message.toLowerCase().includes('timeout'))) {
+    return 'RouteX server is unavailable or starting. Please try again.';
+  }
+
+  // 2. Network / DNS / unreachable (no HTTP response received)
+  if (!err.response) {
+    return 'Cannot connect to the RouteX server.';
+  }
+
+  const status = err.response.status;
+
+  // 3. Invalid credentials
+  if (status === 401) {
+    return 'Invalid email or password.';
+  }
+
+  // 4. Inactive account
+  if (status === 400 && typeof err.response.data?.detail === 'string' && err.response.data.detail.toLowerCase().includes('inactive')) {
+    return 'User account is inactive. Please contact system administrator.';
+  }
+
+  // 5. HTTP 404
+  if (status === 404) {
+    return `RouteX endpoint not found (HTTP 404). Check configured URL at ${getBaseUrl()}`;
+  }
+
+  // 6. HTTP 422
+  if (status === 422) {
+    const details = Array.isArray(err.response.data?.detail)
+      ? err.response.data.detail.map(d => d.msg || `${d.loc?.join('.')}: invalid`).join(', ')
+      : (err.response.data?.detail || 'Invalid request format');
+    return `Request validation error (HTTP 422): ${details}`;
+  }
+
+  // 7. HTTP 500 / 502 / 503 / 504
+  if (status >= 500) {
+    const reqId = err.response.headers?.['x-request-id'] || 'srv';
+    if (status === 502 || status === 503 || status === 504) {
+      return 'RouteX server is unavailable or starting. Please try again.';
+    }
+    return `RouteX server error (HTTP ${status}) [Ref: ${reqId}]. Please try again later.`;
+  }
+
+  // Explicit detail from backend if present
+  if (typeof err.response.data?.detail === 'string') {
+    return err.response.data.detail;
+  }
+
+  return 'Cannot connect to the RouteX server.';
+};
+
 export const authService = {
+  testEndpoint: async (targetUrl) => {
+    const cleanUrl = normalizeApiUrl(targetUrl || getBaseUrl());
+    const healthUrl = cleanUrl.endsWith('/api')
+      ? `${cleanUrl.slice(0, -4)}/health`
+      : `${cleanUrl}/health`;
+
+    const startTime = Date.now();
+    try {
+      const res = await axios.get(healthUrl, { timeout: 8000 });
+      const latencyMs = Date.now() - startTime;
+      return {
+        ok: true,
+        status: res.status,
+        latencyMs,
+        data: res.data
+      };
+    } catch (err) {
+      const latencyMs = Date.now() - startTime;
+      let errorCategory = 'Cannot connect';
+      if (err.code === 'ECONNABORTED' || (err.message && err.message.toLowerCase().includes('timeout'))) {
+        errorCategory = 'Timeout / Starting';
+      } else if (err.response) {
+        errorCategory = `HTTP ${err.response.status}`;
+      } else if (err.message) {
+        errorCategory = err.message;
+      }
+      return {
+        ok: false,
+        latencyMs,
+        error: errorCategory,
+        status: err.response?.status || 0
+      };
+    }
+  },
+
   login: async (username, password) => {
+    // Email addresses are trimmed and normalized case-insensitively
     const cleanUsername = (username || '').trim().toLowerCase();
-    const cleanPassword = (password || '').trim();
+    // Passwords must not be modified by normalization
+    const rawPassword = password || '';
 
     try {
       // Primary: standard URLSearchParams encoding for OAuth2 form specification
       const params = new URLSearchParams();
       params.append('username', cleanUsername);
-      params.append('password', cleanPassword);
+      params.append('password', rawPassword);
       
       const res = await api.post('/auth/login', params.toString(), {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
@@ -112,7 +205,7 @@ export const authService = {
       try {
         const jsonRes = await api.post('/auth/login/json', {
           email: cleanUsername,
-          password: cleanPassword
+          password: rawPassword
         });
         if (jsonRes.data?.access_token) {
           localStorage.setItem('ROUTEX_TOKEN', jsonRes.data.access_token);

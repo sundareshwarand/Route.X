@@ -28,7 +28,7 @@ import {
   Sparkles
 } from 'lucide-react';
 
-import { authService, opsService, getBaseUrl, getWsUrl, aiService } from './services/api';
+import { authService, opsService, getBaseUrl, getWsUrl, aiService, formatAuthError } from './services/api';
 import Overview from './components/Overview';
 import ActiveRequests from './components/ActiveRequests';
 import JunctionMonitoring from './components/JunctionMonitoring';
@@ -100,6 +100,16 @@ export default function App() {
   const [serverModalOpen, setServerModalOpen] = useState(false);
   const [serverUrlInput, setServerUrlInput] = useState(() => localStorage.getItem('ROUTEX_API_URL') || getBaseUrl());
   const [serverSavedNotice, setServerSavedNotice] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [testingEndpoint, setTestingEndpoint] = useState(false);
+
+  const handleTestEndpoint = async () => {
+    setTestingEndpoint(true);
+    setTestResult(null);
+    const res = await authService.testEndpoint(serverUrlInput || getBaseUrl());
+    setTestResult(res);
+    setTestingEndpoint(false);
+  };
 
   const handleSaveServerUrl = () => {
     const cleaned = serverUrlInput.trim().replace(/\/+$/, '');
@@ -223,15 +233,7 @@ export default function App() {
       const data = await authService.login(loginEmail, loginPassword);
       setUser(data.user);
     } catch (err) {
-      if (!err.response) {
-        setLoginError(`Cannot reach backend at ${getBaseUrl()}. Tap ENDPOINT above to check your URL or verify server is running.`);
-      } else if (typeof err.response.data?.detail === 'string') {
-        setLoginError(err.response.data.detail);
-      } else if (Array.isArray(err.response.data?.detail)) {
-        setLoginError(err.response.data.detail.map(d => d.msg).join(', '));
-      } else {
-        setLoginError('Invalid email or password');
-      }
+      setLoginError(formatAuthError(err));
     } finally {
       setLoginLoading(false);
     }
@@ -297,19 +299,54 @@ export default function App() {
                   onClick={() => {
                     localStorage.removeItem('ROUTEX_API_URL');
                     setServerUrlInput(getBaseUrl());
+                    setTestResult(null);
                   }}
                   className="text-[11px] text-slate-400 hover:text-slate-200 underline font-mono"
                 >
                   Reset Default
                 </button>
-                <button 
-                  type="button"
-                  onClick={handleSaveServerUrl}
-                  className="px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-lg text-xs font-mono transition"
-                >
-                  {serverSavedNotice ? 'Saved!' : 'Apply URL'}
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button 
+                    type="button"
+                    disabled={testingEndpoint}
+                    onClick={handleTestEndpoint}
+                    className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-lg text-xs font-mono transition disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${testingEndpoint ? 'animate-spin' : ''}`} />
+                    <span>{testingEndpoint ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={handleSaveServerUrl}
+                    className="px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-lg text-xs font-mono transition"
+                  >
+                    {serverSavedNotice ? 'Saved!' : 'Apply URL'}
+                  </button>
+                </div>
               </div>
+
+              {testResult && (
+                <div className={`p-2.5 rounded-lg border font-mono text-xs transition animate-fade-in ${
+                  testResult.ok 
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                    : 'bg-command-red/10 border-command-red/30 text-command-red'
+                }`}>
+                  <div className="flex items-center justify-between font-semibold">
+                    <span>{testResult.ok ? '✓ Reachable & Online' : '✕ Connection Failed'}</span>
+                    <span className="text-[10px] text-slate-400">{testResult.latencyMs}ms</span>
+                  </div>
+                  {testResult.ok && testResult.data ? (
+                    <div className="text-[10px] text-slate-300 mt-1 space-y-0.5 border-t border-emerald-500/20 pt-1">
+                      <div>Database: <span className={testResult.data.database === 'CONNECTED' ? 'text-emerald-400 font-bold' : 'text-amber-400'}>{testResult.data.database || 'CONNECTED'}</span></div>
+                      <div>System: {testResult.data.system || 'RouteX'}</div>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-command-red/90 mt-1">
+                      Reason: {testResult.error || 'Server unreachable or starting'}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -8,6 +9,8 @@ from ..models import User, UserRole, utc_now
 from ..schemas import UserCreate, UserResponse, Token, LoginRequest
 from ..auth import hash_password, verify_password, create_access_token, get_current_user
 from ..config import settings
+
+logger = logging.getLogger("routex.auth")
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -32,21 +35,29 @@ def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    logger.info(f"User registered successfully: email={email_clean} role={user.role.value}")
     return user
 
 
 @router.post("/login", response_model=Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     email_clean = (form_data.username or "").strip().lower()
-    password_clean = form_data.password.strip() if form_data.password else ""
+    raw_password = form_data.password or ""  # Passwords must not be modified by normalization
     user = db.query(User).filter(func.lower(User.email) == email_clean).first()
-    if not user or not verify_password(password_clean, user.hashed_password):
+    user_exists = bool(user)
+    password_valid = verify_password(raw_password, user.hashed_password) if user else False
+
+    logger.info(f"OAuth2 form login attempt: email={email_clean} | user_exists={user_exists} | password_valid={password_valid}")
+
+    if not user or not password_valid:
+        logger.warning(f"OAuth2 form login rejected: invalid credentials for email={email_clean}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user.is_active:
+        logger.warning(f"OAuth2 form login rejected: inactive account for email={email_clean}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user account")
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -54,6 +65,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
         data={"sub": user.email, "role": user.role.value, "user_id": user.id},
         expires_delta=access_token_expires
     )
+    logger.info(f"OAuth2 form login granted: email={email_clean} role={user.role.value}")
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -64,14 +76,21 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 @router.post("/login/json", response_model=Token)
 def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
     email_clean = (payload.email or "").strip().lower()
-    password_clean = payload.password.strip() if payload.password else ""
+    raw_password = payload.password or ""  # Passwords must not be modified by normalization
     user = db.query(User).filter(func.lower(User.email) == email_clean).first()
-    if not user or not verify_password(password_clean, user.hashed_password):
+    user_exists = bool(user)
+    password_valid = verify_password(raw_password, user.hashed_password) if user else False
+
+    logger.info(f"JSON login attempt: email={email_clean} | user_exists={user_exists} | password_valid={password_valid}")
+
+    if not user or not password_valid:
+        logger.warning(f"JSON login rejected: invalid credentials for email={email_clean}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
     if not user.is_active:
+        logger.warning(f"JSON login rejected: inactive account for email={email_clean}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user account")
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -79,6 +98,7 @@ def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
         data={"sub": user.email, "role": user.role.value, "user_id": user.id},
         expires_delta=access_token_expires
     )
+    logger.info(f"JSON login granted: email={email_clean} role={user.role.value}")
     return {
         "access_token": access_token,
         "token_type": "bearer",

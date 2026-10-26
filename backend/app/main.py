@@ -1,7 +1,11 @@
+import time
+import uuid
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy import text
 from .config import settings
 from .database import engine, Base, SessionLocal
 from .models import User, UserRole, Ambulance, Junction, SignalState, RegisteredDevice, DeviceType, Hospital, HospitalReadiness, utc_now
@@ -18,60 +22,35 @@ logger = logging.getLogger("routex")
 def seed_initial_data():
     """
     Seeds initial default users, ambulances, and junctions for immediate testing.
-    Also ensures demo account credentials remain valid across database restarts.
+    Idempotent: Only creates missing entities; never modifies or resets existing user passwords.
     """
     db = SessionLocal()
     try:
-        # 1. Seed Users
+        # 1. Seed Users (Check each individually; preserve existing accounts and passwords)
         from sqlalchemy import func
-        operator = db.query(User).filter(func.lower(User.email) == "operator@routex.org").first()
-        if not operator:
-            operator = User(
-                email="operator@routex.org",
-                hashed_password=hash_password("operator123"),
-                full_name="Traffic Operations Commander",
-                role=UserRole.OPERATOR,
-                is_active=True
-            )
-            admin = User(
-                email="admin@routex.org",
-                hashed_password=hash_password("admin123"),
-                full_name="System Administrator",
-                role=UserRole.ADMIN,
-                is_active=True
-            )
-            driver = User(
-                email="driver1@routex.org",
-                hashed_password=hash_password("driver123"),
-                full_name="Ambulance Driver Mark",
-                role=UserRole.DRIVER,
-                is_active=True
-            )
-            citizen = User(
-                email="citizen@routex.org",
-                hashed_password=hash_password("citizen123"),
-                full_name="Citizen Road User",
-                role=UserRole.CITIZEN,
-                is_active=True
-            )
-            db.add_all([operator, admin, driver, citizen])
+        seed_users = [
+            ("operator@routex.org", "operator123", "Traffic Operations Commander", UserRole.OPERATOR),
+            ("admin@routex.org", "admin123", "System Administrator", UserRole.ADMIN),
+            ("driver1@routex.org", "driver123", "Ambulance Driver Mark", UserRole.DRIVER),
+            ("citizen@routex.org", "citizen123", "Citizen Road User", UserRole.CITIZEN),
+        ]
+        users_added = 0
+        for email, pwd, name, role in seed_users:
+            existing = db.query(User).filter(func.lower(User.email) == email).first()
+            if not existing:
+                new_user = User(
+                    email=email,
+                    hashed_password=hash_password(pwd),
+                    full_name=name,
+                    role=role,
+                    is_active=True,
+                    created_at=utc_now()
+                )
+                db.add(new_user)
+                users_added += 1
+        if users_added > 0:
             db.commit()
-            logger.info("Default seed users created successfully.")
-        else:
-            # Ensure operator and driver demo passwords verify correctly in cloud deployments
-            updated = False
-            if not verify_password("operator123", operator.hashed_password):
-                operator.hashed_password = hash_password("operator123")
-                operator.is_active = True
-                updated = True
-            driver = db.query(User).filter(func.lower(User.email) == "driver1@routex.org").first()
-            if driver and not verify_password("driver123", driver.hashed_password):
-                driver.hashed_password = hash_password("driver123")
-                driver.is_active = True
-                updated = True
-            if updated:
-                db.commit()
-                logger.info("Demo account passwords refreshed for cloud access.")
+            logger.info(f"Seeded {users_added} initial default user(s).")
 
         # 2. Seed Ambulances
         if not db.query(Ambulance).filter(Ambulance.id == "AMB-01").first():
@@ -179,7 +158,31 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS setup
+class DiagnosticLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+        start_time = time.perf_counter()
+        try:
+            response = await call_next(request)
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            response.headers["X-Request-ID"] = req_id
+            # Safe diagnostic logging: never log authorization tokens or passwords
+            logger.info(
+                f"HTTP [{req_id}] {request.method} {request.url.path} "
+                f"status={response.status_code} duration={duration_ms}ms"
+            )
+            return response
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            logger.error(
+                f"HTTP [{req_id}] {request.method} {request.url.path} "
+                f"ERROR category={type(exc).__name__} duration={duration_ms}ms"
+            )
+            raise exc
+
+
+# Middleware setup
+app.add_middleware(DiagnosticLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -217,12 +220,20 @@ def root():
 
 @app.get("/health")
 def health_check():
+    db_status = "CONNECTED"
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"Health check DB probe error: {e}")
+        db_status = f"ERROR: {type(e).__name__}"
+
     return {
-        "status": "HEALTHY",
+        "status": "HEALTHY" if db_status == "CONNECTED" else "DEGRADED",
         "system": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
-        "database": "CONNECTED",
+        "database": db_status,
         "endpoints": {
             "api": settings.API_V1_STR,
             "ws": "/ws",

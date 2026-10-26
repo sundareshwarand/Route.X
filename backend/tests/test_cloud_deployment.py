@@ -48,11 +48,17 @@ def test_driver_role_cannot_perform_operator_actions():
     SECURITY AUDIT:
     Verify that an authenticated DRIVER role cannot reorder emergency priority queue.
     """
-    # 1. Login as driver
+    # 1. Login as driver (seed account)
     driver_login = client.post(
         "/api/auth/login",
-        data={"username": "test_driver@routex.org", "password": "driver123"}
+        data={"username": "driver1@routex.org", "password": "driver123"}
     )
+    if driver_login.status_code != 200:
+        # Fallback to test_driver if running under test_api fixture
+        driver_login = client.post(
+            "/api/auth/login",
+            data={"username": "test_driver@routex.org", "password": "driver123"}
+        )
     assert driver_login.status_code == 200
     driver_token = driver_login.json()["access_token"]
     driver_headers = {"Authorization": f"Bearer {driver_token}"}
@@ -73,16 +79,26 @@ def test_case_insensitive_and_trimmed_email_login():
     # 1. Capitalized email (Android keyboard auto-capitalization)
     res_cap = client.post(
         "/api/auth/login",
-        data={"username": "Test_Operator@routex.org", "password": "password123"}
+        data={"username": "Operator@routex.org", "password": "operator123"}
     )
+    if res_cap.status_code != 200:
+        res_cap = client.post(
+            "/api/auth/login",
+            data={"username": "Test_Operator@routex.org", "password": "password123"}
+        )
     assert res_cap.status_code == 200
     assert "access_token" in res_cap.json()
 
     # 2. Trailing whitespace
     res_space = client.post(
         "/api/auth/login",
-        data={"username": " test_operator@routex.org ", "password": "password123"}
+        data={"username": " operator@routex.org ", "password": "operator123"}
     )
+    if res_space.status_code != 200:
+        res_space = client.post(
+            "/api/auth/login",
+            data={"username": " test_operator@routex.org ", "password": "password123"}
+        )
     assert res_space.status_code == 200
     assert "access_token" in res_space.json()
 
@@ -91,8 +107,13 @@ def test_json_login_endpoint():
     """Verify fallback JSON login endpoint for mobile WebViews."""
     res = client.post(
         "/api/auth/login/json",
-        json={"email": "Test_Operator@routex.org", "password": "password123"}
+        json={"email": "Operator@routex.org", "password": "operator123"}
     )
+    if res.status_code != 200:
+        res = client.post(
+            "/api/auth/login/json",
+            json={"email": "Test_Operator@routex.org", "password": "password123"}
+        )
     assert res.status_code == 200
     assert "access_token" in res.json()
     assert res.json()["user"]["role"] == "operator"

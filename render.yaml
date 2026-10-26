@@ -1,3 +1,11 @@
+databases:
+  # RouteX Free Persistent PostgreSQL Database (1GB Free Tier)
+  - name: routex-db
+    databaseName: routex
+    user: routex
+    region: oregon
+    plan: free
+
 services:
   # RouteX Backend FastAPI Web Service
   - type: web
@@ -13,7 +21,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: DATABASE_URL
-        value: sqlite:///./routex.db
+        fromDatabase:
+          name: routex-db
+          property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS

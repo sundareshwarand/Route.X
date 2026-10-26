@@ -43,42 +43,35 @@ def get_db():
 
 def ensure_schema_compatibility():
     """
-    Safely inspects existing SQLite tables and adds missing columns without dropping data.
+    Safely inspects tables across SQLite and PostgreSQL and adds missing columns without dropping data.
     """
-    if not settings.DATABASE_URL.startswith("sqlite"):
-        return
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
 
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        # Check AlertDelivery columns
-        try:
-            res = conn.execute(text("PRAGMA table_info(alert_deliveries)")).fetchall()
-            existing_cols = [row[1] for row in res]
-            if existing_cols:
-                if "retry_count" not in existing_cols:
+        with engine.connect() as conn:
+            if "alert_deliveries" in table_names:
+                cols = [c["name"] for c in inspector.get_columns("alert_deliveries")]
+                if "retry_count" not in cols:
                     conn.execute(text("ALTER TABLE alert_deliveries ADD COLUMN retry_count INTEGER DEFAULT 0"))
-                if "failure_reason" not in existing_cols:
+                if "failure_reason" not in cols:
                     conn.execute(text("ALTER TABLE alert_deliveries ADD COLUMN failure_reason VARCHAR"))
-                if "acknowledged_at" not in existing_cols:
-                    conn.execute(text("ALTER TABLE alert_deliveries ADD COLUMN acknowledged_at DATETIME"))
+                if "acknowledged_at" not in cols:
+                    conn.execute(text("ALTER TABLE alert_deliveries ADD COLUMN acknowledged_at TIMESTAMP"))
                 conn.commit()
-        except Exception:
-            pass
 
-        # Check EmergencyRequest columns
-        try:
-            res = conn.execute(text("PRAGMA table_info(emergency_requests)")).fetchall()
-            existing_cols = [row[1] for row in res]
-            if existing_cols:
-                if "triage_priority" not in existing_cols:
+            if "emergency_requests" in table_names:
+                cols = [c["name"] for c in inspector.get_columns("emergency_requests")]
+                if "triage_priority" not in cols:
                     conn.execute(text("ALTER TABLE emergency_requests ADD COLUMN triage_priority VARCHAR DEFAULT 'STANDARD'"))
-                if "estimated_arrival_seconds" not in existing_cols:
+                if "estimated_arrival_seconds" not in cols:
                     conn.execute(text("ALTER TABLE emergency_requests ADD COLUMN estimated_arrival_seconds INTEGER DEFAULT 0"))
-                if "scheduling_reason" not in existing_cols:
+                if "scheduling_reason" not in cols:
                     conn.execute(text("ALTER TABLE emergency_requests ADD COLUMN scheduling_reason VARCHAR"))
-                if "clearance_seconds" not in existing_cols:
+                if "clearance_seconds" not in cols:
                     conn.execute(text("ALTER TABLE emergency_requests ADD COLUMN clearance_seconds INTEGER DEFAULT 3"))
                 conn.commit()
-        except Exception:
-            pass
+    except Exception:
+        pass
 

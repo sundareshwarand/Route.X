@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
 from .config import settings
-from .database import engine, Base, SessionLocal
+from .database import engine, Base, SessionLocal, ensure_schema_compatibility
 from .models import User, UserRole, Ambulance, Junction, SignalState, RegisteredDevice, DeviceType, Hospital, HospitalReadiness, utc_now
 from .auth import hash_password, verify_password
 from .services.ws_manager import ws_manager
@@ -145,8 +145,9 @@ def seed_initial_data():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize DB schemas
+    # Initialize DB schemas safely across SQLite & PostgreSQL
     Base.metadata.create_all(bind=engine)
+    ensure_schema_compatibility()
     seed_initial_data()
     yield
 

@@ -43,6 +43,12 @@ def test_database_url_normalization():
     assert normalized.startswith("postgresql://")
 
 
+def test_schema_compatibility_execution():
+    """Verify ensure_schema_compatibility runs safely without throwing exceptions."""
+    from app.database import ensure_schema_compatibility
+    ensure_schema_compatibility()
+
+
 def test_driver_role_cannot_perform_operator_actions():
     """
     SECURITY AUDIT:

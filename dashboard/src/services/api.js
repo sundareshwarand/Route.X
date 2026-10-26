@@ -38,6 +38,18 @@ export const getBaseUrl = () => {
     const hostname = window.location.hostname || 'localhost';
     const isHttps = window.location.protocol === 'https:';
     if (isHttps && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      // If served on static hosting (e.g. Render static site, Vercel, Netlify, GitHub Pages),
+      // point to the cloud API endpoint instead of the static CDN origin
+      if (
+        hostname.includes('frontend') ||
+        hostname.includes('github.io') ||
+        hostname.includes('vercel.app') ||
+        hostname.includes('netlify.app') ||
+        hostname.includes('pages.dev') ||
+        (hostname.endsWith('.onrender.com') && !hostname.includes('routex-backend'))
+      ) {
+        return DEFAULT_CLOUD_API_URL;
+      }
       return `${window.location.origin}/api`;
     }
     return `http://${hostname}:8000/api`;

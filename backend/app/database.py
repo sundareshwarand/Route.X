@@ -5,6 +5,8 @@ from .config import settings
 
 # Normalize database URL (e.g. handle Render/Heroku postgres:// -> postgresql://)
 raw_db_url = settings.DATABASE_URL
+if not raw_db_url or not str(raw_db_url).strip():
+    raw_db_url = "sqlite:///./routex.db"
 if raw_db_url.startswith("postgres://"):
     raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
 

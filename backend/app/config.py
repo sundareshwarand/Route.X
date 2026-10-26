@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = "sqlite:///./routex.db"
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def validate_database_url(cls, v):
+        if not v or not str(v).strip():
+            return "sqlite:///./routex.db"
+        return str(v).strip()
     
     # Operational limits & timing
     DEFAULT_PRIORITY_TIMEOUT_SECONDS: int = 20

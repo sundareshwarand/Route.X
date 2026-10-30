@@ -94,7 +94,7 @@ export default function App() {
 
   // Login Form States
   const [loginEmail, setLoginEmail] = useState('operator@routex.org');
-  const [loginPassword, setLoginPassword] = useState('operator123');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [serverModalOpen, setServerModalOpen] = useState(false);
@@ -479,7 +479,7 @@ export default function App() {
               <div className="grid grid-cols-2 gap-2">
                 <button 
                   type="button"
-                  onClick={() => { setLoginEmail('operator@routex.org'); setLoginPassword('operator123'); }}
+                  onClick={() => { setLoginEmail('operator@routex.org'); setLoginPassword(''); }}
                   className="px-2.5 py-2 bg-command-surface hover:bg-command-border/70 rounded-lg border border-command-border text-center text-xs text-command-text transition flex flex-col items-center space-y-0.5"
                 >
                   <span className="font-semibold text-sky-400 text-[11px]">Traffic Commander</span>
@@ -487,7 +487,7 @@ export default function App() {
                 </button>
                 <button 
                   type="button"
-                  onClick={() => { setLoginEmail('driver1@routex.org'); setLoginPassword('driver123'); }}
+                  onClick={() => { setLoginEmail('driver1@routex.org'); setLoginPassword(''); }}
                   className="px-2.5 py-2 bg-command-surface hover:bg-command-border/70 rounded-lg border border-command-border text-center text-xs text-command-text transition flex flex-col items-center space-y-0.5"
                 >
                   <span className="font-semibold text-emerald-400 text-[11px]">Fleet Medic (AMB-01)</span>

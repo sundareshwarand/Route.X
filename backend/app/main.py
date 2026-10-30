@@ -28,12 +28,18 @@ def seed_initial_data():
     db = SessionLocal()
     try:
         # 1. Seed Users (Check each individually; preserve existing accounts and passwords)
+        import os
         from sqlalchemy import func
+        operator_pwd = os.getenv("ROUTEX_OPERATOR_PASSWORD", "operator123")
+        admin_pwd = os.getenv("ROUTEX_ADMIN_PASSWORD", "admin123")
+        driver_pwd = os.getenv("ROUTEX_DRIVER_PASSWORD", "driver123")
+        citizen_pwd = os.getenv("ROUTEX_CITIZEN_PASSWORD", "citizen123")
+
         seed_users = [
-            ("operator@routex.org", "operator123", "Traffic Operations Commander", UserRole.OPERATOR),
-            ("admin@routex.org", "admin123", "System Administrator", UserRole.ADMIN),
-            ("driver1@routex.org", "driver123", "Ambulance Driver Mark", UserRole.DRIVER),
-            ("citizen@routex.org", "citizen123", "Citizen Road User", UserRole.CITIZEN),
+            ("operator@routex.org", operator_pwd, "Traffic Operations Commander", UserRole.OPERATOR),
+            ("admin@routex.org", admin_pwd, "System Administrator", UserRole.ADMIN),
+            ("driver1@routex.org", driver_pwd, "Ambulance Driver Mark", UserRole.DRIVER),
+            ("citizen@routex.org", citizen_pwd, "Citizen Road User", UserRole.CITIZEN),
         ]
         users_added = 0
         for email, pwd, name, role in seed_users:

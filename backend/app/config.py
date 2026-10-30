@@ -4,6 +4,9 @@ from pydantic import Field, AliasChoices, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+root_dir = Path(__file__).resolve().parents[2]
+backend_dir = Path(__file__).resolve().parents[1]
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "RouteX - Intelligent Emergency Traffic Management System"
     VERSION: str = "1.0.0"
@@ -20,7 +23,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
     
     # Database
-    DATABASE_URL: str = "sqlite:///./routex.db"
+    DATABASE_URL: str = Field(
+        default="sqlite:///./routex.db",
+        validation_alias=AliasChoices("DATABASE_URL", "ROUTEX_DATABASE_URL")
+    )
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -88,7 +94,14 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
-        env_file=(str(Path(__file__).resolve().parent.parent / ".env"), ".env"),
+        env_file=(
+            str(root_dir / ".env.local"),
+            str(root_dir / ".env"),
+            str(backend_dir / ".env.local"),
+            str(backend_dir / ".env"),
+            ".env.local",
+            ".env"
+        ),
         env_prefix="ROUTEX_",
         extra="ignore"
     )

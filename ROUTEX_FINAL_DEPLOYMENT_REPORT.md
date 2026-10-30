@@ -12,19 +12,22 @@
 | Component | Status | Real Evidence / Verification Details |
 | :--- | :--- | :--- |
 | **GitHub Commit** | **`VERIFIED SUCCESS`** | Commit history verified; repository clean and tracked on `master`. |
-| **Neon PostgreSQL Project** | **`PENDING USER AUTHORIZATION`** | Permanent $0 free tier, no credit card required. Awaiting OAuth project creation. |
-| **PostgreSQL Connection Config**| **`COMPLETED LOCALLY`** | Connection pooling (`pool_size=10`, `pool_recycle=300`, `pool_pre_ping=True`) & SSL handling verified. |
-| **Render Backend Service (`routex-api`)** | **`PENDING USER AUTHORIZATION`** | Probed `https://routex-api.onrender.com/health` -> `x-render-routing: no-server` (unreserved domain ready for Blueprint launch). |
-| **Render Frontend Service (`routex-dashboard`)** | **`PENDING USER AUTHORIZATION`** | Probed `https://routex-dashboard.onrender.com` -> `x-render-routing: no-server` (unreserved domain ready for Blueprint launch). |
-| **Backend Health (`/health`)** | **`COMPLETED LOCALLY`** | Unit & integration probes return HTTP 200 `{"status": "HEALTHY", "process": "ALIVE", "database": "CONNECTED"}`. |
-| **Database Readiness (`/ready`)**| **`COMPLETED LOCALLY`** | Probes `SELECT 1`. Returns HTTP 200 when ready, HTTP 503 on database disconnect. |
-| **Interactive API Docs (`/docs`)** | **`COMPLETED LOCALLY`** | Swagger UI documentation route compiled and active. |
-| **User Authentication & RBAC** | **`COMPLETED LOCALLY`** | Password hashing (bcrypt), JWT expiration, case-insensitive email normalization, and operator-only permission barriers verified. |
-| **WebSocket Telemetry (`/ws`)**| **`COMPLETED LOCALLY`** | Dynamic `wss://` resolution with exponential backoff auto-reconnect tested. |
-| **Emergency Workflow & Routing**| **`COMPLETED LOCALLY`** | Dijkstra shortest-path routing, 2.0s mandatory all-red clearance, and multi-ambulance triage verified. |
-| **Database Persistence Lifecycle**| **`COMPLETED LOCALLY`** | `test_persistence_lifecycle.py` verified: user accounts, ambulances, and emergency corridor records survive complete engine disposal and restart. |
+| **Neon PostgreSQL Project** | **`VERIFIED SUCCESS`** | Linked to project `routex-db (late-math-25288420)` in org `org-little-wave-40291670` on branch `production`. Engine: PostgreSQL 18.6. |
+| **PostgreSQL Connection Config**| **`VERIFIED SUCCESS`** | Connection pooling (`pool_size=10`, `pool_recycle=300`, `pool_pre_ping=True`), `psycopg2` driver rewrite, and SSL pooling verified. |
+| **Database Schema & Migrations** | **`VERIFIED SUCCESS`** | `Base.metadata.create_all()` and `ensure_schema_compatibility()` executed successfully on Neon cloud DB. All 11 tables present. |
+| **Initial Entity Seeding** | **`VERIFIED SUCCESS`** | Neon live DB seeded with 4 users (`operator@routex.org`, `driver1@routex.org`), 3 ambulances, 5 junctions, 3 hospitals. |
+| **Database Persistence Lifecycle**| **`VERIFIED SUCCESS`** | Live test verified: emergency request `REQ-NEON-LIVE-001` created, engine disposed, reconnected, and record verified intact. |
+| **Render Backend Service (`routex-api`)** | **`PENDING USER BLUEPRINT APPLY`** | Probed `https://routex-api.onrender.com/health` -> `x-render-routing: no-server` (unreserved domain ready for Blueprint launch). |
+| **Render Frontend Service (`routex-dashboard`)** | **`PENDING USER BLUEPRINT APPLY`** | Probed `https://routex-dashboard.onrender.com` -> `x-render-routing: no-server` (unreserved domain ready for Blueprint launch). |
+| **Backend Health (`/health`)** | **`COMPLETED & TESTED`** | Unit & integration probes return HTTP 200 `{"status": "HEALTHY", "process": "ALIVE", "database": "CONNECTED"}`. |
+| **Database Readiness (`/ready`)**| **`COMPLETED & TESTED`** | Probes `SELECT 1`. Returns HTTP 200 when ready, HTTP 503 on database disconnect. |
+| **Interactive API Docs (`/docs`)** | **`COMPLETED & TESTED`** | Swagger UI documentation route compiled and active. |
+| **User Authentication & RBAC** | **`COMPLETED & TESTED`** | Password hashing (bcrypt), JWT expiration, case-insensitive email normalization, and operator-only permission barriers verified. |
+| **WebSocket Telemetry (`/ws`)**| **`COMPLETED & TESTED`** | Dynamic `wss://` resolution with exponential backoff auto-reconnect tested. |
+| **Emergency Workflow & Routing**| **`COMPLETED & TESTED`** | Dijkstra shortest-path routing, 2.0s mandatory all-red clearance, and multi-ambulance triage verified. |
+| **Full Automated Test Suite** | **`VERIFIED SUCCESS`** | 69 passed, 0 failures across all 6 test modules (100% pass rate). |
 | **Security Review** | **`VERIFIED SUCCESS`** | Production mode strictly blocks ephemeral SQLite; passwords decoupled from frontend state; secrets loaded exclusively from environment variables. |
-| **Android Mobile APK** | **`COMPLETED LOCALLY`** | Fresh APK compiled at `dashboard/android/app/build/outputs/apk/debug/app-debug.apk` (4.81 MB). |
+| **Android Mobile APK** | **`COMPLETED & TESTED`** | Fresh APK compiled at `dashboard/android/app/build/outputs/apk/debug/app-debug.apk` (4,809,793 bytes). |
 | **Cross-Network Mobile Test** | **`PENDING PHYSICAL TEST`** | Requires installing APK on physical Android device and authenticating over cellular 4G/5G mobile data. |
 
 ---

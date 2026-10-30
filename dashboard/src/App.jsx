@@ -102,12 +102,42 @@ export default function App() {
   const [serverSavedNotice, setServerSavedNotice] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [testingEndpoint, setTestingEndpoint] = useState(false);
+  const [endpointHealth, setEndpointHealth] = useState({
+    status: 'CONNECTING', // 'CONNECTING' | 'CONNECTED' | 'UNAVAILABLE' | 'TIMEOUT'
+    latencyMs: null,
+    database: null
+  });
+
+  const probeEndpointHealth = async (url) => {
+    setEndpointHealth(prev => ({ ...prev, status: 'CONNECTING' }));
+    const target = url || getBaseUrl();
+    const res = await authService.testEndpoint(target);
+    if (res.ok) {
+      setEndpointHealth({
+        status: 'CONNECTED',
+        latencyMs: res.latencyMs,
+        database: res.data?.database || 'CONNECTED'
+      });
+      setTestResult(res);
+    } else {
+      const isTimeout = res.error && (res.error.toLowerCase().includes('timeout') || res.status === 504);
+      setEndpointHealth({
+        status: isTimeout ? 'TIMEOUT' : 'UNAVAILABLE',
+        latencyMs: res.latencyMs,
+        database: 'DISCONNECTED',
+        error: res.error
+      });
+      setTestResult(res);
+    }
+  };
+
+  useEffect(() => {
+    probeEndpointHealth();
+  }, []);
 
   const handleTestEndpoint = async () => {
     setTestingEndpoint(true);
-    setTestResult(null);
-    const res = await authService.testEndpoint(serverUrlInput || getBaseUrl());
-    setTestResult(res);
+    await probeEndpointHealth(serverUrlInput || getBaseUrl());
     setTestingEndpoint(false);
   };
 
@@ -116,6 +146,7 @@ export default function App() {
     if (cleaned) {
       localStorage.setItem('ROUTEX_API_URL', cleaned);
       setServerSavedNotice(true);
+      probeEndpointHealth(cleaned);
       setTimeout(() => {
         setServerSavedNotice(false);
         setServerModalOpen(false);
@@ -269,9 +300,25 @@ export default function App() {
             className="flex items-center space-x-2 text-xs font-mono text-command-muted px-2.5 py-1 bg-command-surface border border-command-border hover:border-sky-500/50 rounded-lg transition"
             title="Configure Cloud or Local Backend API URL"
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span className={`w-2 h-2 rounded-full ${
+              endpointHealth.status === 'CONNECTED' ? 'bg-emerald-400 animate-pulse' :
+              endpointHealth.status === 'CONNECTING' ? 'bg-amber-400 animate-spin' :
+              endpointHealth.status === 'TIMEOUT' ? 'bg-amber-500 animate-pulse' :
+              'bg-command-red'
+            }`}></span>
             <span className="hidden sm:inline text-slate-300">ENDPOINT:</span>
             <span className="font-semibold text-sky-400 max-w-[150px] sm:max-w-[200px] truncate">{getBaseUrl()}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+              endpointHealth.status === 'CONNECTED' ? 'bg-emerald-500/20 text-emerald-300' :
+              endpointHealth.status === 'CONNECTING' ? 'bg-amber-500/20 text-amber-300' :
+              endpointHealth.status === 'TIMEOUT' ? 'bg-amber-500/20 text-amber-300' :
+              'bg-command-red/20 text-command-red'
+            }`}>
+              {endpointHealth.status === 'CONNECTED' ? `CONNECTED (${endpointHealth.latencyMs}ms)` :
+               endpointHealth.status === 'CONNECTING' ? 'CONNECTING...' :
+               endpointHealth.status === 'TIMEOUT' ? 'TIMEOUT' :
+               'UNAVAILABLE'}
+            </span>
             <Settings className="w-3.5 h-3.5 text-slate-400" />
           </button>
         </div>

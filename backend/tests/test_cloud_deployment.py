@@ -150,3 +150,44 @@ def test_mandatory_two_second_clearance_safety_invariable():
     jnc2 = next(j for j in status["junctions"] if j["id"] == "JNC-02")
     assert jnc2["signal_state"] == "FAILSAFE_ALL_RED"
     assert jnc2["clearance_remaining"] == 2.0
+
+
+def test_readiness_and_api_health_endpoints():
+    """Verify /ready readiness probe and /api/health alias for production health probes."""
+    # 1. Test /ready
+    res_ready = client.get("/ready")
+    assert res_ready.status_code == 200
+    ready_data = res_ready.json()
+    assert ready_data["status"] == "READY"
+    assert ready_data["database"] == "CONNECTED"
+
+    # 2. Test /api/health alias
+    res_api_health = client.get("/api/health")
+    assert res_api_health.status_code == 200
+    api_health_data = res_api_health.json()
+    assert api_health_data["status"] == "HEALTHY"
+    assert api_health_data["process"] == "ALIVE"
+    assert api_health_data["database"] == "CONNECTED"
+
+
+def test_production_persistence_validation():
+    """
+    CRITICAL ARCHITECTURAL SAFETY INVARIANT:
+    In production mode, the server must reject ephemeral SQLite and require persistent PostgreSQL.
+    """
+    from app.config import Settings
+
+    # 1. Reject empty DATABASE_URL in production
+    with pytest.raises(ValueError, match="FATAL CONFIGURATION ERROR"):
+        Settings(ENVIRONMENT="production", DATABASE_URL="")
+
+    # 2. Reject sqlite:/// in production
+    with pytest.raises(ValueError, match="FATAL CONFIGURATION ERROR"):
+        Settings(ENVIRONMENT="production", DATABASE_URL="sqlite:///./routex.db")
+
+    # 3. Allow persistent PostgreSQL connection in production
+    prod_settings = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://user:pass@ep-cool-db.us-east-2.aws.neon.tech/neondb?sslmode=require"
+    )
+    assert prod_settings.DATABASE_URL.startswith("postgresql://")

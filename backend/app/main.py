@@ -3,6 +3,7 @@ import uuid
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
@@ -145,11 +146,26 @@ def seed_initial_data():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize DB schemas safely across SQLite & PostgreSQL
-    Base.metadata.create_all(bind=engine)
-    ensure_schema_compatibility()
-    seed_initial_data()
+    # Safe startup initialization
+    try:
+        logger.info(f"Starting RouteX backend service [env={settings.ENVIRONMENT}]...")
+        Base.metadata.create_all(bind=engine)
+        ensure_schema_compatibility()
+        seed_initial_data()
+        logger.info("RouteX startup: Database schema and seed data initialized successfully.")
+    except Exception as e:
+        logger.error(f"Fatal error during database startup: {e}")
+        if settings.ENVIRONMENT.lower() == "production":
+            raise e
     yield
+    # Graceful shutdown cleanup
+    logger.info("Initiating graceful shutdown of RouteX backend service...")
+    try:
+        engine.dispose()
+        logger.info("Database engine connection pool disposed cleanly.")
+    except Exception as e:
+        logger.warning(f"Error during database pool cleanup on shutdown: {e}")
+    logger.info("RouteX backend service shutdown complete.")
 
 
 app = FastAPI(
@@ -222,25 +238,60 @@ def root():
 @app.get("/health")
 def health_check():
     db_status = "CONNECTED"
+    is_ready = True
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
     except Exception as e:
         logger.error(f"Health check DB probe error: {e}")
         db_status = f"ERROR: {type(e).__name__}"
+        is_ready = False
 
-    return {
-        "status": "HEALTHY" if db_status == "CONNECTED" else "DEGRADED",
+    payload = {
+        "status": "HEALTHY" if is_ready else "DEGRADED",
+        "process": "ALIVE",
+        "ready": is_ready,
+        "database": db_status,
         "system": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
-        "database": db_status,
         "endpoints": {
             "api": settings.API_V1_STR,
             "ws": "/ws",
-            "docs": "/docs"
+            "docs": "/docs",
+            "ready": "/ready"
         }
     }
+    return JSONResponse(status_code=200 if is_ready else 503, content=payload)
+
+
+@app.get(f"{settings.API_V1_STR}/health")
+def api_health_check():
+    return health_check()
+
+
+@app.get("/ready")
+def readiness_check():
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+        return {
+            "status": "READY",
+            "process": "ALIVE",
+            "database": "CONNECTED",
+            "environment": settings.ENVIRONMENT
+        }
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "UNREADY",
+                "process": "ALIVE",
+                "database": f"ERROR: {type(e).__name__}",
+                "detail": str(e)
+            }
+        )
 
 
 @app.websocket("/ws")

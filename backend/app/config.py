@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import List, Union
-from pydantic import Field, AliasChoices, field_validator
+from pydantic import Field, AliasChoices, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +28,22 @@ class Settings(BaseSettings):
         if not v or not str(v).strip():
             return "sqlite:///./routex.db"
         return str(v).strip()
+
+    @model_validator(mode="after")
+    def validate_production_persistence(self) -> 'Settings':
+        if self.ENVIRONMENT.lower() == "production":
+            db_url = (self.DATABASE_URL or "").strip()
+            if not db_url or db_url.startswith("sqlite"):
+                raise ValueError(
+                    "FATAL CONFIGURATION ERROR: RouteX is running in production mode (ENVIRONMENT='production'), "
+                    "but DATABASE_URL is not configured with a persistent PostgreSQL database. "
+                    "In containerized cloud environments (such as Render), SQLite files are stored on ephemeral disks "
+                    "and will be erased upon container restart or idle sleep. "
+                    "To prevent permanent loss of user credentials, emergency corridors, and audit logs, "
+                    "configure a persistent PostgreSQL DATABASE_URL in your hosting environment settings "
+                    "(e.g., from Neon.tech: postgresql://<user>:<password>@<host>/<database>?sslmode=require)."
+                )
+        return self
     
     # Operational limits & timing
     DEFAULT_PRIORITY_TIMEOUT_SECONDS: int = 20

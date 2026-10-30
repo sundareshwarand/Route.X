@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const DEFAULT_CLOUD_API_URL = 'https://routex-backend.onrender.com/api';
+export const DEFAULT_CLOUD_API_URL = import.meta.env.VITE_API_BASE_URL || 'https://routex-api.onrender.com/api';
 
 export const normalizeApiUrl = (url) => {
   if (!url) return '';
@@ -41,12 +41,13 @@ export const getBaseUrl = () => {
       // If served on static hosting (e.g. Render static site, Vercel, Netlify, GitHub Pages),
       // point to the cloud API endpoint instead of the static CDN origin
       if (
+        hostname.includes('dashboard') ||
         hostname.includes('frontend') ||
         hostname.includes('github.io') ||
         hostname.includes('vercel.app') ||
         hostname.includes('netlify.app') ||
         hostname.includes('pages.dev') ||
-        (hostname.endsWith('.onrender.com') && !hostname.includes('routex-backend'))
+        (hostname.endsWith('.onrender.com') && !hostname.includes('routex-api') && !hostname.includes('routex-backend'))
       ) {
         return DEFAULT_CLOUD_API_URL;
       }

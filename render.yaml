@@ -1,7 +1,7 @@
 services:
   # RouteX Backend FastAPI Web Service (Free Tier)
   - type: web
-    name: routex-backend
+    name: routex-api
     runtime: python
     region: oregon
     plan: free
@@ -12,14 +12,16 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
+      - key: PYTHONPATH
+        value: .
+      - key: ENVIRONMENT
+        value: production
       - key: DATABASE_URL
-        value: "" # Optional external PostgreSQL URL (e.g. from Neon.tech). Defaults to SQLite if left empty.
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
         value: "*"
-      - key: ENVIRONMENT
-        value: production
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
@@ -27,7 +29,7 @@ services:
 
   # RouteX Frontend React SPA (Free Static Site Tier)
   - type: web
-    name: routex-frontend
+    name: routex-dashboard
     runtime: static
     region: oregon
     plan: free
@@ -36,7 +38,7 @@ services:
     autoDeploy: true
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://routex-backend.onrender.com/api
+        value: https://routex-api.onrender.com/api
     routes:
       - type: rewrite
         source: /*

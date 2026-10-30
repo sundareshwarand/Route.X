@@ -1,6 +1,7 @@
 import json
+import secrets
 from datetime import timedelta
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -11,6 +12,7 @@ from ..models import (
     JunctionEvent,
     DeviceHeartbeat,
     RegisteredDevice,
+    AmbulanceTelemetry,
     RequestStatus,
     RequestSource,
     SignalState,
@@ -21,7 +23,11 @@ from ..schemas import (
     LoRaPacketEvent,
     JunctionAcknowledge,
     JunctionHeartbeat,
-    PendingCommandResponse
+    PendingCommandResponse,
+    DeviceResponse,
+    DeviceRegisterRequest,
+    AmbulanceTelemetryRequest,
+    AmbulanceTelemetryResponse
 )
 from ..services.coordination_service import (
     calculate_message_hash,
@@ -263,6 +269,12 @@ def receive_heartbeat(
     # Check registered device or create entry
     dev = db.query(RegisteredDevice).filter(RegisteredDevice.hardware_id == hb.hardware_id).first()
     if dev:
+        dev.last_seen_at = now
+        dev.connection_status = "ONLINE"
+        dev.health_status = "HEALTHY"
+        dev.ip_address = hb.ip_address
+        if hb.firmware_version:
+            dev.firmware_version = hb.firmware_version
         record = DeviceHeartbeat(
             device_id=dev.id,
             ip_address=hb.ip_address,
@@ -275,3 +287,168 @@ def receive_heartbeat(
 
     db.commit()
     return {"status": "HEARTBEAT_ACK", "junction_id": hb.junction_id, "timestamp": now.isoformat()}
+
+
+@router.get("/devices", response_model=List[DeviceResponse])
+def list_registered_devices(db: Session = Depends(get_db)):
+    """
+    Returns fleet registry of all cloud-connected IoT devices, terminals, and mobile units.
+    """
+    now = utc_now()
+    devices = db.query(RegisteredDevice).order_by(RegisteredDevice.created_at.asc()).all()
+    # Auto-mark devices offline if last_seen > 120 seconds
+    for d in devices:
+        if d.last_seen_at and (now - d.last_seen_at.replace(tzinfo=now.tzinfo if d.last_seen_at.tzinfo is None else None)).total_seconds() > 120:
+            if d.connection_status == "ONLINE":
+                d.connection_status = "OFFLINE"
+    return devices
+
+
+@router.post("/devices/register", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED)
+def register_cloud_device(
+    dev_in: DeviceRegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Secure device provisioning endpoint.
+    Registers an ESP32 ambulance, ESP8266 junction, or hospital terminal with a provisioned device secret.
+    """
+    existing = db.query(RegisteredDevice).filter(RegisteredDevice.hardware_id == dev_in.hardware_id).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Device with hardware ID '{dev_in.hardware_id}' is already registered."
+        )
+
+    device_key = dev_in.device_key or f"dev-key-{secrets.token_hex(16)}"
+    new_dev = RegisteredDevice(
+        hardware_id=dev_in.hardware_id,
+        device_type=dev_in.device_type,
+        name=dev_in.name or f"Device {dev_in.hardware_id}",
+        role=dev_in.role or "AMBULANCE",
+        device_key=device_key,
+        junction_id=dev_in.junction_id,
+        ambulance_id=dev_in.ambulance_id,
+        connection_status="ONLINE",
+        health_status="HEALTHY",
+        last_seen_at=utc_now(),
+        is_active=True
+    )
+    db.add(new_dev)
+    db.commit()
+    db.refresh(new_dev)
+    return new_dev
+
+
+@router.post("/telemetry", response_model=AmbulanceTelemetryResponse)
+async def ingest_ambulance_telemetry(
+    tel: AmbulanceTelemetryRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Direct authenticated IoT cloud telemetry endpoint.
+    Ingests live GPS, speed, heading, and emergency intent from ambulance Android app or ESP32.
+    Includes stale GPS rejection, replay prevention, and live WebSocket broadcast.
+    """
+    now = utc_now()
+
+    # 1. Device Authentication
+    device = db.query(RegisteredDevice).filter(
+        RegisteredDevice.hardware_id == tel.hardware_id,
+        RegisteredDevice.is_active == True
+    ).first()
+    if not device:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unregistered or deactivated hardware device."
+        )
+    if device.device_key != tel.device_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid device credentials."
+        )
+
+    # 2. Stale GPS Detection
+    is_stale = False
+    if tel.timestamp:
+        ts = tel.timestamp if tel.timestamp.tzinfo else tel.timestamp.replace(tzinfo=now.tzinfo)
+        time_diff = (now - ts).total_seconds()
+        if time_diff > 300:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Telemetry rejected: GPS packet expired ({round(time_diff)}s old)."
+            )
+        elif time_diff > 45:
+            is_stale = True
+
+    # 3. Update Device State
+    device.last_seen_at = now
+    device.connection_status = "ONLINE"
+    device.health_status = "HEALTHY"
+
+    # 4. Record Telemetry
+    record = AmbulanceTelemetry(
+        ambulance_id=tel.ambulance_id,
+        hardware_id=tel.hardware_id,
+        latitude=tel.latitude,
+        longitude=tel.longitude,
+        speed_kmh=tel.speed_kmh,
+        heading_deg=tel.heading_deg,
+        emergency_active=tel.emergency_active,
+        target_junction_id=tel.target_junction_id,
+        target_direction=tel.target_direction.value if tel.target_direction else None,
+        battery_level=tel.battery_level,
+        is_stale=is_stale,
+        recorded_at=now
+    )
+    db.add(record)
+    db.commit()
+
+    # 5. Broadcast to connected dashboards over WebSocket
+    await ws_manager.broadcast("AMBULANCE_TELEMETRY", {
+        "ambulance_id": tel.ambulance_id,
+        "hardware_id": tel.hardware_id,
+        "latitude": tel.latitude,
+        "longitude": tel.longitude,
+        "speed_kmh": tel.speed_kmh,
+        "heading_deg": tel.heading_deg,
+        "emergency_active": tel.emergency_active,
+        "target_junction_id": tel.target_junction_id,
+        "target_direction": tel.target_direction.value if tel.target_direction else None,
+        "is_stale": is_stale,
+        "timestamp": now.isoformat()
+    })
+
+    return {
+        "status": "TELEMETRY_RECORDED",
+        "ambulance_id": tel.ambulance_id,
+        "latitude": tel.latitude,
+        "longitude": tel.longitude,
+        "speed_kmh": tel.speed_kmh,
+        "emergency_active": tel.emergency_active,
+        "is_stale": is_stale,
+        "server_time": now
+    }
+
+
+@router.get("/telemetry/latest/{ambulance_id}")
+def get_latest_telemetry(ambulance_id: str, db: Session = Depends(get_db)):
+    """
+    Returns the most recent GPS telemetry point for an ambulance.
+    """
+    tel = db.query(AmbulanceTelemetry).filter(
+        AmbulanceTelemetry.ambulance_id == ambulance_id
+    ).order_by(AmbulanceTelemetry.recorded_at.desc()).first()
+    if not tel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No telemetry available for this vehicle.")
+    return {
+        "ambulance_id": tel.ambulance_id,
+        "latitude": tel.latitude,
+        "longitude": tel.longitude,
+        "speed_kmh": tel.speed_kmh,
+        "heading_deg": tel.heading_deg,
+        "emergency_active": tel.emergency_active,
+        "target_junction_id": tel.target_junction_id,
+        "is_stale": tel.is_stale,
+        "recorded_at": tel.recorded_at.isoformat()
+    }

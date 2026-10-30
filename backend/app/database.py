@@ -64,6 +64,14 @@ def ensure_schema_compatibility():
         table_names = inspector.get_table_names()
 
         with engine.connect() as conn:
+            if not raw_db_url.startswith("sqlite"):
+                for val in ['HOSPITAL', 'OPERATOR', 'ADMIN', 'AMBULANCE', 'TRAFFIC_JUNCTION']:
+                    try:
+                        conn.execute(text(f"ALTER TYPE devicetype ADD VALUE IF NOT EXISTS '{val}'"))
+                        conn.commit()
+                    except Exception:
+                        pass
+
             if "alert_deliveries" in table_names:
                 cols = [c["name"] for c in inspector.get_columns("alert_deliveries")]
                 if "retry_count" not in cols:
@@ -72,6 +80,24 @@ def ensure_schema_compatibility():
                     conn.execute(text("ALTER TABLE alert_deliveries ADD COLUMN failure_reason VARCHAR"))
                 if "acknowledged_at" not in cols:
                     conn.execute(text("ALTER TABLE alert_deliveries ADD COLUMN acknowledged_at TIMESTAMP"))
+                conn.commit()
+
+            if "registered_devices" in table_names:
+                cols = [c["name"] for c in inspector.get_columns("registered_devices")]
+                if "name" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN name VARCHAR"))
+                if "role" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN role VARCHAR DEFAULT 'AMBULANCE'"))
+                if "connection_status" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN connection_status VARCHAR DEFAULT 'OFFLINE'"))
+                if "health_status" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN health_status VARCHAR DEFAULT 'HEALTHY'"))
+                if "last_seen_at" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN last_seen_at TIMESTAMP"))
+                if "ip_address" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN ip_address VARCHAR"))
+                if "firmware_version" not in cols:
+                    conn.execute(text("ALTER TABLE registered_devices ADD COLUMN firmware_version VARCHAR DEFAULT '1.0.0'"))
                 conn.commit()
 
             if "emergency_requests" in table_names:

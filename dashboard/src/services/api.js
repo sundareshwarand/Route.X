@@ -98,6 +98,36 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Automatic resilient retry for safe idempotent GET queries across transient network drops
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config;
+    if (config && config.method === 'get' && !config._retry) {
+      if (!error.response || (error.response.status >= 502 && error.response.status <= 504)) {
+        config._retry = true;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return api(config);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const isOnline = () => (typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+export const subscribeNetworkStatus = (callback) => {
+  if (typeof window === 'undefined') return () => {};
+  const handleOnline = () => callback(true);
+  const handleOffline = () => callback(false);
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
+  return () => {
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
+  };
+};
+
 export const formatAuthError = (err) => {
   if (!err) return 'Unknown authentication error.';
 
@@ -279,6 +309,22 @@ export const opsService = {
   },
   getAlerts: async () => {
     const res = await api.get('/alerts');
+    return res.data;
+  },
+  getDevices: async () => {
+    const res = await api.get('/hardware/devices');
+    return res.data;
+  },
+  registerDevice: async (data) => {
+    const res = await api.post('/hardware/devices/register', data);
+    return res.data;
+  },
+  sendTelemetry: async (data) => {
+    const res = await api.post('/hardware/telemetry', data);
+    return res.data;
+  },
+  getLatestTelemetry: async (ambulanceId) => {
+    const res = await api.get(`/hardware/telemetry/latest/${ambulanceId}`);
     return res.data;
   },
   broadcastTestAlert: async (junctionId, zone, direction) => {

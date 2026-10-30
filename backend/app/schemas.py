@@ -186,6 +186,63 @@ class PendingCommandResponse(BaseModel):
     command_type: Optional[str] = None  # "ACTIVATE_PRIORITY" or "REVERT_NORMAL"
 
 
+# ===================== MULTI-DEVICE CLOUD SCHEMAS =====================
+class DeviceResponse(BaseModel):
+    id: str
+    hardware_id: str
+    device_type: DeviceType
+    name: Optional[str] = None
+    role: str = "AMBULANCE"
+    is_active: bool = True
+    connection_status: str = "OFFLINE"
+    health_status: str = "HEALTHY"
+    last_seen_at: Optional[datetime] = None
+    ip_address: Optional[str] = None
+    firmware_version: Optional[str] = "1.0.0"
+    junction_id: Optional[str] = None
+    ambulance_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeviceRegisterRequest(BaseModel):
+    hardware_id: str
+    device_type: DeviceType
+    name: Optional[str] = None
+    role: str = "AMBULANCE"
+    device_key: Optional[str] = None
+    junction_id: Optional[str] = None
+    ambulance_id: Optional[str] = None
+
+
+class AmbulanceTelemetryRequest(BaseModel):
+    hardware_id: str
+    device_key: str
+    ambulance_id: str
+    latitude: float
+    longitude: float
+    speed_kmh: float = 0.0
+    heading_deg: float = 0.0
+    emergency_active: bool = False
+    target_junction_id: Optional[str] = None
+    target_direction: Optional[Direction] = None
+    battery_level: Optional[int] = None
+    timestamp: Optional[datetime] = None
+    idempotency_key: Optional[str] = None
+
+
+class AmbulanceTelemetryResponse(BaseModel):
+    status: str
+    ambulance_id: str
+    latitude: float
+    longitude: float
+    speed_kmh: float
+    emergency_active: bool
+    is_stale: bool
+    server_time: datetime
+
+
 # ===================== NEARBY VEHICLE ALERTS =====================
 class NearbyVehicleAlertResponse(BaseModel):
     id: str

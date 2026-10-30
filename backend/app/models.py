@@ -69,6 +69,11 @@ class RequestSource(str, enum.Enum):
 class DeviceType(str, enum.Enum):
     ESP32_AMBULANCE = "esp32_ambulance"
     ESP8266_JUNCTION = "esp8266_junction"
+    AMBULANCE = "AMBULANCE"
+    TRAFFIC_JUNCTION = "TRAFFIC_JUNCTION"
+    HOSPITAL = "HOSPITAL"
+    OPERATOR = "OPERATOR"
+    ADMIN = "ADMIN"
 
 
 class AlertDeliveryStatus(str, enum.Enum):
@@ -160,15 +165,40 @@ class RegisteredDevice(Base):
     __tablename__ = "registered_devices"
 
     id = Column(String, primary_key=True, default=generate_uuid)
+    name = Column(String, nullable=True)
     device_type = Column(SQLEnum(DeviceType), nullable=False)
+    role = Column(String, default="AMBULANCE", nullable=False)
     hardware_id = Column(String, unique=True, index=True, nullable=False)  # MAC / unique serial
     device_key = Column(String, nullable=False)  # Device secret key for auth header
     junction_id = Column(String, ForeignKey("junctions.id"), nullable=True)
     ambulance_id = Column(String, ForeignKey("ambulances.id"), nullable=True)
     is_active = Column(Boolean, default=True)
+    connection_status = Column(String, default="OFFLINE", nullable=False)
+    health_status = Column(String, default="HEALTHY", nullable=False)
+    last_seen_at = Column(DateTime, nullable=True)
+    ip_address = Column(String, nullable=True)
+    firmware_version = Column(String, default="1.0.0", nullable=True)
     created_at = Column(DateTime, default=utc_now)
 
     heartbeats = relationship("DeviceHeartbeat", back_populates="device")
+
+
+class AmbulanceTelemetry(Base):
+    __tablename__ = "ambulance_telemetry"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    ambulance_id = Column(String, ForeignKey("ambulances.id"), nullable=False, index=True)
+    hardware_id = Column(String, nullable=True, index=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    speed_kmh = Column(Float, default=0.0)
+    heading_deg = Column(Float, default=0.0)
+    emergency_active = Column(Boolean, default=False)
+    target_junction_id = Column(String, nullable=True)
+    target_direction = Column(String, nullable=True)
+    battery_level = Column(Integer, nullable=True)
+    is_stale = Column(Boolean, default=False)
+    recorded_at = Column(DateTime, default=utc_now, index=True)
 
 
 class EmergencyRequest(Base):

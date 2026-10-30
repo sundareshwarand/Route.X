@@ -20,19 +20,21 @@ import { opsService } from '../services/api';
 export default function ReliabilityMonitor({ junctions = [] }) {
   const [selectedJunction, setSelectedJunction] = useState('ALL');
   const [metricData, setMetricData] = useState(null);
+  const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const fetchReliability = async () => {
     try {
       setLoading(true);
-      let data;
-      if (selectedJunction === 'ALL') {
-        data = await opsService.getReliabilitySummary();
-      } else {
-        data = await opsService.getJunctionReliability(selectedJunction);
-      }
+      const [data, deviceList] = await Promise.all([
+        selectedJunction === 'ALL'
+          ? opsService.getReliabilitySummary()
+          : opsService.getJunctionReliability(selectedJunction),
+        opsService.getDevices().catch(() => [])
+      ]);
       setMetricData(data);
+      if (deviceList) setDevices(deviceList);
     } catch (err) {
       console.error("Failed to load reliability metrics", err);
     } finally {
@@ -265,6 +267,95 @@ export default function ReliabilityMonitor({ junctions = [] }) {
         <div className="text-xs text-command-subtext leading-relaxed bg-command-surface/50 p-3.5 rounded-lg border border-command-border/60">
           <strong className="text-slate-200">Reliability Methodology:</strong> Packet delivery rate is computed over a sliding 24-hour evaluation window as 
           <code className="text-sky-300 bg-sky-950/40 px-1.5 py-0.5 rounded border border-sky-800/50 mx-1 font-mono text-[11px]">Valid Packets / Total Packets &times; 100%</code>. Corrupt frames failing CRC-16 checksums are immediately rejected before state transitions occur, ensuring zero malformed injections into traffic junction controllers.
+        </div>
+      </div>
+
+      {/* Cloud-Connected Multi-Device Fleet Grid */}
+      <div className="bg-command-panel border border-command-border rounded-xl p-5 shadow-command-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <Cpu className="w-4 h-4 text-cyan-400" />
+            <h3 className="font-bold text-sm text-slate-100">Public Cloud Device Mesh & Network Hub</h3>
+            <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[10px] font-mono">
+              Multi-Network HTTPS/WSS
+            </span>
+          </div>
+          <span className="text-[11px] text-command-muted font-mono">
+            {devices.length} Registered IoT & Mobile Terminals
+          </span>
+        </div>
+
+        <p className="text-xs text-command-subtext">
+          Real-time health telemetry across heterogeneous internet networks (Jio/Airtel 4G/5G, broadband Wi-Fi, and edge gateways). All units communicate through the central public cloud backend.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {devices.map((dev) => {
+            const isOnline = dev.connection_status === 'ONLINE';
+            const isDegraded = dev.connection_status === 'DEGRADED';
+            const isConnecting = dev.connection_status === 'CONNECTING';
+            const isReconnecting = dev.connection_status === 'RECONNECTING';
+
+            const statusColor = isOnline
+              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+              : isDegraded
+              ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30'
+              : isConnecting || isReconnecting
+              ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+              : 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+
+            const statusDot = isOnline
+              ? 'bg-emerald-400 animate-pulse'
+              : isDegraded
+              ? 'bg-yellow-400'
+              : isConnecting || isReconnecting
+              ? 'bg-amber-400 animate-ping'
+              : 'bg-rose-500';
+
+            return (
+              <div 
+                key={dev.id} 
+                className="bg-command-surface border border-command-border/80 hover:border-cyan-500/40 rounded-xl p-3.5 space-y-2.5 transition flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">
+                      {dev.role || dev.device_type}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold border flex items-center gap-1.5 ${statusColor}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${statusDot}`}></span>
+                      {dev.connection_status}
+                    </span>
+                  </div>
+                  <h4 className="text-xs font-bold text-slate-100 mt-1 line-clamp-1">{dev.name || dev.hardware_id}</h4>
+                  <span className="text-[10px] font-mono text-command-muted block">{dev.hardware_id}</span>
+                </div>
+
+                <div className="pt-2 border-t border-command-border/60 text-[10px] font-mono space-y-1 text-command-subtext">
+                  <div className="flex justify-between">
+                    <span>IP / Route:</span>
+                    <span className="text-slate-300">{dev.ip_address || 'Cloud Gateway'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Health:</span>
+                    <span className={dev.health_status === 'HEALTHY' ? 'text-emerald-400' : 'text-amber-400'}>
+                      {dev.health_status}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Firmware:</span>
+                    <span className="text-slate-400">v{dev.firmware_version || '1.0.0'}</span>
+                  </div>
+                  {dev.last_seen_at && (
+                    <div className="flex justify-between text-[9px] text-command-muted">
+                      <span>Last Ping:</span>
+                      <span>{new Date(dev.last_seen_at).toLocaleTimeString()}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

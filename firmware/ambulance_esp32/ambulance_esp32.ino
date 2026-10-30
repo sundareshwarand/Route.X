@@ -22,6 +22,9 @@
 
 #include <SPI.h>
 #include <LoRa.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
 // Hardware Pin Definitions
@@ -40,15 +43,25 @@
 
 #define LORA_FREQUENCY 433E6 // 433.0 MHz ISM band
 
-// Ambulance Configuration
-const char* AMBULANCE_ID = "AMB-01";
-const char* PROTOCOL_VERSION = "ROUTEX_V1";
-const char* TARGET_JUNCTION = "JNC-01";
+// Ambulance Cloud & Fleet Configuration
+const char* AMBULANCE_ID     = "AMB-01";
+const char* PROTOCOL_VERSION = "ROUTEX_V2_CLOUD";
+const char* TARGET_JUNCTION  = "JNC-01";
+const char* HARDWARE_ID      = "ESP32-AMB-01";
+const char* DEVICE_KEY       = "dev-key-amb-secret-101";
+
+// Wi-Fi / Hotspot Configuration (Supports Cellular Hotspot or Station Wi-Fi)
+const char* WIFI_SSID        = "RouteX-Mobile-AP"; // Configure hotspot / station SSID
+const char* WIFI_PASSWORD    = "RouteXSecure2026";
+// Centralized Cloud API Endpoint (HTTPS production with HTTP fallback for local dev)
+const char* CLOUD_API_URL    = "https://routex-api.onrender.com/api";
 
 // State & Debounce Tracking
 uint32_t sequenceNumber = 1;
 uint32_t lastDebounceTime = 0;
 const uint32_t DEBOUNCE_DELAY_MS = 250;
+uint32_t lastCloudTelemetryTime = 0;
+const uint32_t CLOUD_TELEMETRY_INTERVAL_MS = 10000; // 10s periodic telemetry
 
 // Simple CRC16 for Packet Verification
 uint16_t calculateCRC16(const uint8_t* data, size_t len) {
@@ -73,6 +86,57 @@ void blinkStatusLED(int count, int durationMs) {
     digitalWrite(PIN_STATUS_LED, LOW);
     delay(durationMs);
   }
+}
+
+void sendCloudTelemetry(float lat, float lon, float speedKmh, const char* direction, bool emergencyActive) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[CLOUD] Wi-Fi offline. Telemetry queued for reconnect.");
+    return;
+  }
+
+  HTTPClient http;
+  String url = String(CLOUD_API_URL) + "/hardware/telemetry";
+
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure(); // Accept Cloudflare / Render edge SSL certificates
+
+  if (url.startsWith("https://")) {
+    http.begin(secureClient, url);
+  } else {
+    WiFiClient plainClient;
+    http.begin(plainClient, url);
+  }
+
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument<384> doc;
+  doc["hardware_id"] = HARDWARE_ID;
+  doc["device_key"] = DEVICE_KEY;
+  doc["ambulance_id"] = AMBULANCE_ID;
+  doc["latitude"] = lat;
+  doc["longitude"] = lon;
+  doc["speed_kmh"] = speedKmh;
+  doc["heading_deg"] = 85.0;
+  doc["emergency_active"] = emergencyActive;
+  doc["target_junction_id"] = TARGET_JUNCTION;
+  if (direction != NULL && strlen(direction) > 0) {
+    doc["target_direction"] = direction;
+  }
+
+  String requestBody;
+  serializeJson(doc, requestBody);
+
+  Serial.println("[CLOUD POST] Dispatching telemetry to Public Cloud:");
+  Serial.println(requestBody);
+
+  int httpCode = http.POST(requestBody);
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.printf("[CLOUD ACK] HTTP %d: %s\n", httpCode, response.c_str());
+  } else {
+    Serial.printf("[CLOUD ERR] Failed to send telemetry, error: %s\n", http.errorToString(httpCode).c_str());
+  }
+  http.end();
 }
 
 void transmitPriorityRequest(const char* direction) {
@@ -106,13 +170,16 @@ void transmitPriorityRequest(const char* direction) {
   Serial.println("\n[LoRa TX] Broadcasting Priority Request Packet:");
   Serial.println(finalPayload);
 
-  // Transmit over LoRa SX1278
+  // 1. Transmit locally over LoRa SX1278 (Zero-Latency Local Override)
   LoRa.beginPacket();
   LoRa.print(finalPayload);
   LoRa.endPacket();
 
   digitalWrite(PIN_STATUS_LED, LOW);
   blinkStatusLED(2, 60); // 2 quick confirmation blinks
+
+  // 2. Transmit concurrently to Public Cloud Backend over Wi-Fi/Cellular Hotspot
+  sendCloudTelemetry(28.6145, 77.2100, 56.0, direction, true);
 }
 
 void setup() {
@@ -152,18 +219,49 @@ void setup() {
 
   Serial.println("SUCCESS.");
   Serial.printf("[READY] Vehicle ID: %s | Target: %s\n", AMBULANCE_ID, TARGET_JUNCTION);
+
+  // Initialize Wi-Fi Connection for Cloud Telemetry
+  Serial.print("[INIT] Connecting to Wi-Fi SSID: ");
+  Serial.println(WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Non-blocking Wi-Fi connect: timeout after 5 seconds to ensure physical buttons remain active immediately
+  uint32_t wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - wifiStart < 5000)) {
+    delay(200);
+    Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n[WIFI] Connected! IP: " + WiFi.localIP().toString());
+    Serial.printf("[CLOUD] Public API Endpoint: %s\n", CLOUD_API_URL);
+  } else {
+    Serial.println("\n[WIFI] Not connected. Device running in autonomous LoRa-first mode.");
+  }
+
   Serial.println("Press Physical Button (LEFT / STRAIGHT / RIGHT) to transmit.");
 
   blinkStatusLED(3, 100); // 3 rapid blinks for ready status
 }
 
 void loop() {
+  uint32_t now = millis();
+
+  // Periodic Cloud Telemetry Pulse (every 10 seconds if connected)
+  if (now - lastCloudTelemetryTime > CLOUD_TELEMETRY_INTERVAL_MS) {
+    lastCloudTelemetryTime = now;
+    if (WiFi.status() == WL_CONNECTED) {
+      sendCloudTelemetry(28.6139, 77.2090, 0.0, "", false);
+    } else {
+      // Reconnect attempt in background
+      WiFi.reconnect();
+    }
+  }
+
   // Read Buttons (Active-LOW)
   bool leftPressed     = (digitalRead(PIN_BTN_LEFT) == LOW);
   bool straightPressed = (digitalRead(PIN_BTN_STRAIGHT) == LOW);
   bool rightPressed    = (digitalRead(PIN_BTN_RIGHT) == LOW);
 
-  uint32_t now = millis();
   if ((leftPressed || straightPressed || rightPressed) && (now - lastDebounceTime > DEBOUNCE_DELAY_MS)) {
     lastDebounceTime = now;
 

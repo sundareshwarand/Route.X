@@ -28,7 +28,7 @@ import {
   Sparkles
 } from 'lucide-react';
 
-import { authService, opsService, getBaseUrl, getWsUrl, aiService, formatAuthError } from './services/api';
+import { authService, opsService, getBaseUrl, getWsUrl, aiService, formatAuthError, isOnline, subscribeNetworkStatus } from './services/api';
 import Overview from './components/Overview';
 import ActiveRequests from './components/ActiveRequests';
 import JunctionMonitoring from './components/JunctionMonitoring';
@@ -85,6 +85,8 @@ export default function App() {
   const [junctions, setJunctions] = useState([]);
   const [activeRequests, setActiveRequests] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [devices, setDevices] = useState([]);
+  const [networkOnline, setNetworkOnline] = useState(() => isOnline());
   const [wsState, setWsState] = useState('DISCONNECTED'); // 'CONNECTING' | 'LIVE' | 'RECONNECTING' | 'DISCONNECTED'
   const [lastTelemetryTime, setLastTelemetryTime] = useState(null);
   const [aiStatus, setAiStatus] = useState(null);
@@ -158,18 +160,20 @@ export default function App() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [anData, jncData, reqData, altData, aiData] = await Promise.all([
+      const [anData, jncData, reqData, altData, aiData, devData] = await Promise.all([
         opsService.getAnalytics().catch((err) => { console.warn("Analytics fetch error:", err); return null; }),
         opsService.getJunctions().catch((err) => { console.warn("Junctions fetch error:", err); return null; }),
         opsService.getRequests().catch((err) => { console.warn("Requests fetch error:", err); return null; }),
         opsService.getAlerts().catch((err) => { console.warn("Alerts fetch error:", err); return null; }),
-        aiService.getStatus().catch((err) => { console.warn("AI status fetch error:", err); return null; })
+        aiService.getStatus().catch((err) => { console.warn("AI status fetch error:", err); return null; }),
+        opsService.getDevices().catch((err) => { console.warn("Devices fetch error:", err); return []; })
       ]);
       if (anData) setAnalytics(anData);
       if (jncData) setJunctions(jncData);
       if (reqData) setActiveRequests(reqData);
       if (altData) setAlerts(altData);
       if (aiData) setAiStatus(aiData);
+      if (devData) setDevices(devData);
 
       if (!anData && !jncData && !reqData && !altData) {
         setFetchError(`Unable to connect to RouteX backend at ${getBaseUrl()}`);
@@ -184,6 +188,18 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  // Network Status Monitor (Detects cellular / Wi-Fi drops and recovery)
+  useEffect(() => {
+    const unsub = subscribeNetworkStatus((online) => {
+      setNetworkOnline(online);
+      if (online) {
+        probeEndpointHealth();
+        if (user) fetchData();
+      }
+    });
+    return unsub;
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -278,6 +294,21 @@ export default function App() {
   // Get active tab title for breadcrumbs
   const currentNav = NAV_GROUPS.flatMap(g => g.items).find(i => i.id === activeTab);
   const activeTitle = currentNav ? currentNav.label : 'Operations Overview';
+
+  // Computed Unified Fleet Connection Indicator
+  const connectionIndicator = !networkOnline
+    ? { label: 'OFFLINE', color: 'text-rose-400 bg-rose-500/10 border-rose-500/30', dot: 'bg-rose-500' }
+    : wsState === 'LIVE' && endpointHealth.status === 'CONNECTED'
+    ? { label: 'ONLINE', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', dot: 'bg-emerald-400 animate-pulse' }
+    : wsState === 'RECONNECTING'
+    ? { label: 'RECONNECTING', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30', dot: 'bg-purple-400 animate-ping' }
+    : endpointHealth.status === 'TIMEOUT'
+    ? { label: 'DEGRADED', color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30', dot: 'bg-yellow-400' }
+    : endpointHealth.status === 'CONNECTING' || wsState === 'CONNECTING'
+    ? { label: 'CONNECTING', color: 'text-amber-400 bg-amber-500/10 border-amber-500/30', dot: 'bg-amber-400 animate-pulse' }
+    : fetchError && fetchError.includes('401')
+    ? { label: 'UNAUTHORIZED', color: 'text-rose-400 bg-rose-500/10 border-rose-500/30', dot: 'bg-rose-500' }
+    : { label: 'ONLINE', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', dot: 'bg-emerald-400 animate-pulse' };
 
   // Enterprise Command Center Authentication Screen
   if (!user) {
@@ -540,6 +571,20 @@ export default function App() {
 
         {/* Center: Live Telemetry Indicator Pills */}
         <div className="hidden lg:flex items-center space-x-3">
+          {/* Master Multi-Device Cloud Status */}
+          <div className="flex items-center space-x-2 px-3 py-1 bg-command-surface rounded-full text-xs border border-command-border">
+            <span className={`w-2 h-2 rounded-full ${connectionIndicator.dot}`}></span>
+            <span className="text-command-subtext text-[11px]">System Status:</span>
+            <span className={`font-mono text-[11px] font-bold ${connectionIndicator.color.split(' ')[0]}`}>
+              {connectionIndicator.label}
+            </span>
+            {lastTelemetryTime && (
+              <span className="text-[10px] text-command-muted font-mono border-l border-command-border/60 pl-2">
+                {lastTelemetryTime}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center space-x-2 px-3 py-1 bg-command-surface rounded-full text-xs border border-command-border">
             <span className={`w-2 h-2 rounded-full ${analytics?.active_requests > 0 ? 'bg-command-red animate-pulse' : 'bg-command-muted'}`}></span>
             <span className="text-command-subtext text-[11px]">Active Emergency Priority:</span>

@@ -83,25 +83,43 @@ def seed_initial_data():
             db.commit()
             logger.info("Default test junctions created.")
 
-        # 4. Seed Registered Hardware Devices
-        if not db.query(RegisteredDevice).filter(RegisteredDevice.hardware_id == "ESP32-AMB-01").first():
-            dev1 = RegisteredDevice(
-                device_type=DeviceType.ESP32_AMBULANCE,
-                hardware_id="ESP32-AMB-01",
-                device_key="dev-key-amb-secret-101",
-                ambulance_id="AMB-01",
-                is_active=True
-            )
-            dev2 = RegisteredDevice(
-                device_type=DeviceType.ESP8266_JUNCTION,
-                hardware_id="ESP8266-JNC-01",
-                device_key="dev-key-jnc-secret-001",
-                junction_id="JNC-01",
-                is_active=True
-            )
-            db.add_all([dev1, dev2])
-            db.commit()
-            logger.info("Default registered hardware devices created.")
+        # 4. Seed Registered Hardware Devices (Per-device check and upgrade)
+        default_devices = [
+            ("ESP32-AMB-01", "Ambulance 01 Cloud/LoRa Unit", DeviceType.ESP32_AMBULANCE, "AMBULANCE", "dev-key-amb-secret-101", None, "AMB-01"),
+            ("ESP8266-JNC-01", "Central Avenue Junction Gateway", DeviceType.ESP8266_JUNCTION, "TRAFFIC_JUNCTION", "dev-key-jnc-secret-001", "JNC-01", None),
+            ("HOSP-TERM-01", "City Trauma Reception Terminal", DeviceType.HOSPITAL, "HOSPITAL", "dev-key-hosp-secret-201", "JNC-05", None),
+            ("OPS-CONSOLE-01", "Operations Command Console", DeviceType.OPERATOR, "OPERATOR", "dev-key-ops-secret-301", None, None),
+        ]
+        for hw_id, name, dev_type, role, dev_key, jnc_id, amb_id in default_devices:
+            dev = db.query(RegisteredDevice).filter(RegisteredDevice.hardware_id == hw_id).first()
+            if not dev:
+                dev = RegisteredDevice(
+                    hardware_id=hw_id,
+                    name=name,
+                    device_type=dev_type,
+                    role=role,
+                    device_key=dev_key,
+                    junction_id=jnc_id,
+                    ambulance_id=amb_id,
+                    connection_status="ONLINE",
+                    health_status="HEALTHY",
+                    last_seen_at=utc_now(),
+                    is_active=True
+                )
+                db.add(dev)
+            else:
+                if not dev.name:
+                    dev.name = name
+                if not dev.role or dev.role == "AMBULANCE" and role != "AMBULANCE":
+                    dev.role = role
+                if not dev.connection_status:
+                    dev.connection_status = "ONLINE"
+                if not dev.health_status:
+                    dev.health_status = "HEALTHY"
+                if not dev.last_seen_at:
+                    dev.last_seen_at = utc_now()
+        db.commit()
+        logger.info("Default registered multi-device fleet initialized.")
 
         # 5. Seed Municipal Receiving Hospitals
         if not db.query(Hospital).filter(Hospital.id == "HOSP-01").first():

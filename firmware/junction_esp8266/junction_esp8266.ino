@@ -27,6 +27,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
@@ -51,7 +52,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // Network & Gateway Identity
 const char* WIFI_SSID     = "RouteX-Gateway-AP"; // Configure local Wi-Fi SSID
 const char* WIFI_PASSWORD = "EmergencyTransit123";
-const char* BACKEND_HOST  = "http://192.168.1.100:8000/api"; // Replace with RouteX Backend IP
+// Central Public Cloud Backend (HTTPS production with local fallback)
+const char* BACKEND_HOST  = "https://routex-api.onrender.com/api";
 
 const char* JUNCTION_ID   = "JNC-01";
 const char* HARDWARE_ID   = "ESP8266-JNC-01";
@@ -147,7 +149,9 @@ void updateOLED() {
 void sendHeartbeat() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  WiFiClient client;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  WiFiClient plainClient;
   HTTPClient http;
   String url = String(BACKEND_HOST) + "/hardware/heartbeat";
 
@@ -158,12 +162,16 @@ void sendHeartbeat() {
   doc["free_heap"] = ESP.getFreeHeap();
   doc["uptime_seconds"] = millis() / 1000;
   doc["wifi_rssi"] = WiFi.RSSI();
-  doc["firmware_version"] = "1.0.0-PROTOTYPE";
+  doc["firmware_version"] = "1.0.0-CLOUD";
 
   String payload;
   serializeJson(doc, payload);
 
-  http.begin(client, url);
+  if (url.startsWith("https://")) {
+    http.begin(secureClient, url);
+  } else {
+    http.begin(plainClient, url);
+  }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Id", HARDWARE_ID);
   http.addHeader("X-Device-Key", DEVICE_KEY);
@@ -180,7 +188,9 @@ void sendHeartbeat() {
 void acknowledgeCommand(const String& reqId, const String& status, const String& signalState, const String& dir) {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  WiFiClient client;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  WiFiClient plainClient;
   HTTPClient http;
   String url = String(BACKEND_HOST) + "/hardware/acknowledge";
 
@@ -196,7 +206,11 @@ void acknowledgeCommand(const String& reqId, const String& status, const String&
   String payload;
   serializeJson(doc, payload);
 
-  http.begin(client, url);
+  if (url.startsWith("https://")) {
+    http.begin(secureClient, url);
+  } else {
+    http.begin(plainClient, url);
+  }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Id", HARDWARE_ID);
   http.addHeader("X-Device-Key", DEVICE_KEY);
@@ -209,7 +223,9 @@ void acknowledgeCommand(const String& reqId, const String& status, const String&
 void forwardLoRaEventToBackend(const String& loraJson, int rssi, float snr) {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  WiFiClient client;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  WiFiClient plainClient;
   HTTPClient http;
   String url = String(BACKEND_HOST) + "/hardware/event";
 
@@ -226,7 +242,11 @@ void forwardLoRaEventToBackend(const String& loraJson, int rssi, float snr) {
   String forwardPayload;
   serializeJson(doc, forwardPayload);
 
-  http.begin(client, url);
+  if (url.startsWith("https://")) {
+    http.begin(secureClient, url);
+  } else {
+    http.begin(plainClient, url);
+  }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Id", HARDWARE_ID);
   http.addHeader("X-Device-Key", DEVICE_KEY);
@@ -240,11 +260,17 @@ void pollServerCommands() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (currentState == STATE_PRIORITY_ACTIVE) return; // Do not interrupt existing active transit
 
-  WiFiClient client;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  WiFiClient plainClient;
   HTTPClient http;
-  String url = String(BACKEND_HOST) + "/hardware/pending-commands/" + String(JUNCTION_ID);
+  String url = String(BACKEND_HOST) + "/hardware/pending/" + String(JUNCTION_ID);
 
-  http.begin(client, url);
+  if (url.startsWith("https://")) {
+    http.begin(secureClient, url);
+  } else {
+    http.begin(plainClient, url);
+  }
   http.addHeader("X-Device-Id", HARDWARE_ID);
   http.addHeader("X-Device-Key", DEVICE_KEY);
 
